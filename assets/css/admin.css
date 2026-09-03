@@ -1,0 +1,22 @@
+.tr-admin-wrap .form-table th {
+	width: 220px;
+}
+
+.tr-admin-wrap .form-table .form-table {
+	margin: 8px 0 16px;
+}
+
+.tr-admin-wrap .description {
+	max-width: 480px;
+}
+
+.tr-inline-search {
+	margin: 12px 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.tr-inline-search input[type="text"] {
+	min-width: 260px;
+}

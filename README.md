@@ -17,6 +17,11 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.2.0
+- New: Programs, Families, Students and Enrollments admin screens
+- New: Family billing anchor set from the first child's enrollment date
+- New: Admin notice when family composition changes and the monthly amount needs review
+
 ### v0.1.1
 - New: GitHub Actions workflow builds the plugin zip on every `v*` tag
 - New: Self-updater checks GitHub Releases and shows updates in WordPress
