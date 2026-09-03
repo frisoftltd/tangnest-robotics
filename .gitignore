@@ -1,0 +1,40 @@
+# WordPress
+wp-config.php
+wp-content/uploads/
+
+# Dependencies
+/vendor/
+/node_modules/
+
+# Build artifacts
+*.zip
+*.tar.gz
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+# IDE & editors
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Environment / secrets — NEVER commit real keys
+.env
+.env.local
+secrets.php
+
+# PHP Composer
+composer.lock
