@@ -3,7 +3,7 @@
  * Plugin Name:       Tangnest Robotics — Class & Payment Manager
  * Plugin URI:        https://github.com/frisoftltd/tangnest-robotics
  * Description:       Manages robotics class enrollment, family billing, and IremboPay payments for Tangnest. Standalone — does not require WooCommerce or Tutor LMS.
- * Version:           0.1.0
+ * Version:           0.1.1
  * Author:            Fri Soft Ltd
  * Author URI:        https://frisoft.rw
  * License:           GPL-2.0-or-later
@@ -15,7 +15,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-define( 'TANGNEST_ROBOTICS_VERSION',     '0.1.0' );
+define( 'TANGNEST_ROBOTICS_VERSION',     '0.1.1' );
 define( 'TANGNEST_ROBOTICS_DB_VERSION',  '0.1.0' );
 define( 'TANGNEST_ROBOTICS_PLUGIN_FILE', __FILE__ );
 define( 'TANGNEST_ROBOTICS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
@@ -39,6 +39,7 @@ final class Tangnest_Robotics {
 	private function includes(): void {
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-logger.php';
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-db.php';
+		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-github-updater.php';
 	}
 
 	private function hooks(): void {
@@ -46,6 +47,8 @@ final class Tangnest_Robotics {
 		// so the schema must also be kept current via a version check on every load.
 		add_action( 'plugins_loaded', [ $this, 'maybe_upgrade' ], 5 );
 		add_action( 'init', [ $this, 'load_textdomain' ] );
+		add_action( 'admin_init', [ $this, 'admin_init' ] );
+		add_filter( 'plugin_action_links_' . plugin_basename( TANGNEST_ROBOTICS_PLUGIN_FILE ), [ $this, 'plugin_action_links' ] );
 	}
 
 	public function maybe_upgrade(): void {
@@ -54,6 +57,51 @@ final class Tangnest_Robotics {
 
 	public function load_textdomain(): void {
 		load_plugin_textdomain( 'tangnest-robotics', false, dirname( plugin_basename( TANGNEST_ROBOTICS_PLUGIN_FILE ) ) . '/languages' );
+	}
+
+	public function admin_init(): void {
+		if ( ! is_admin() ) {
+			return;
+		}
+
+		$this->maybe_handle_check_for_updates();
+
+		$token = defined( 'TANGNEST_ROBOTICS_GITHUB_TOKEN' ) ? TANGNEST_ROBOTICS_GITHUB_TOKEN : '';
+		new TR_GitHub_Updater(
+			TANGNEST_ROBOTICS_PLUGIN_FILE,
+			'frisoftltd',
+			'tangnest-robotics',
+			$token
+		);
+	}
+
+	private function maybe_handle_check_for_updates(): void {
+		if ( ! isset( $_GET['tr-check-for-updates'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'tr_check_for_updates' );
+
+		if ( ! current_user_can( 'update_plugins' ) ) {
+			wp_die( esc_html__( 'You do not have permission to do that.', 'tangnest-robotics' ) );
+		}
+
+		delete_site_transient( 'update_plugins' );
+		delete_site_transient( TR_GitHub_Updater::RELEASE_TRANSIENT );
+
+		wp_safe_redirect( admin_url( 'plugins.php' ) );
+		exit;
+	}
+
+	public function plugin_action_links( array $links ): array {
+		$url = wp_nonce_url(
+			add_query_arg( 'tr-check-for-updates', '1', admin_url( 'plugins.php' ) ),
+			'tr_check_for_updates'
+		);
+
+		$links[] = '<a href="' . esc_url( $url ) . '">' . esc_html__( 'Check for Updates', 'tangnest-robotics' ) . '</a>';
+
+		return $links;
 	}
 }
 

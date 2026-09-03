@@ -17,5 +17,10 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.1.1
+- New: GitHub Actions workflow builds the plugin zip on every `v*` tag
+- New: Self-updater checks GitHub Releases and shows updates in WordPress
+- New: "Check for Updates" link on the Plugins screen
+
 ### 0.1.0
 - Initial skeleton: plugin bootstrap, constants, logger, DB schema for families/students/programs/enrollments.

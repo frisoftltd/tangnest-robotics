@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build plugin zip
+        run: |
+          mkdir -p /tmp/build/tangnest-robotics
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.gitignore' \
+            --exclude='*.md' \
+            --exclude='node_modules' \
+            --exclude='*.zip' \
+            ./ /tmp/build/tangnest-robotics/
+          cd /tmp/build
+          zip -r tangnest-robotics.zip tangnest-robotics
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/build/tangnest-robotics.zip
