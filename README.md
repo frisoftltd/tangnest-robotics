@@ -17,6 +17,10 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.3.4
+- Fix: the v0.3.3 link-previewer filter was blocking real parents — WhatsApp's in-app browser sends a User-Agent containing "WhatsApp/", which matched the crawler check and silently dropped genuine taps. The filter now also requires the absence of "Mozilla" (real browsers, including in-app browsers, always send it; bare server-side preview fetchers never do), so it catches actual crawlers without catching real visits
+- Every skipped previewer request is now debug-logged with method and User-Agent
+
 ### v0.3.3
 - Fix: access-link generation verifies a reused cached token against the family's stored hash before handing it out, and mints a fresh token on any mismatch — closes a real failure mode where a stale pre-0.3.2 token cache (7-day TTL) could survive alongside a newer, different token
 - Fix: one-time cleanup on upgrade removes any leftover `tr_access_raw_*` transients from before 0.3.2

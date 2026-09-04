@@ -80,8 +80,17 @@ class TR_Parent_Dashboard {
 	 * a different IP than the eventual real visit. Left unchecked, that
 	 * fetch alone burns a device slot and can start the grace-window clock
 	 * before the parent ever sees the message.
+	 *
+	 * These substrings alone are NOT sufficient to identify a previewer —
+	 * WhatsApp's in-app browser (used by real parents tapping the link)
+	 * also carries "WhatsApp/x.y.z" in its UA. What actually distinguishes
+	 * a bare server-side fetch from a real browser is the absence of
+	 * "Mozilla": every real browser, including in-app browsers, sends
+	 * "Mozilla/5.0 (...)"; a preview fetcher sends a bare product token
+	 * like "WhatsApp/2.23.20.0" with nothing else. See
+	 * is_link_previewer_request().
 	 */
-	const PREVIEWER_USER_AGENTS = [ 'WhatsApp', 'facebookexternalhit', 'Twitterbot', 'Slackbot', 'TelegramBot' ];
+	const PREVIEWER_USER_AGENTS = [ 'WhatsApp/', 'facebookexternalhit', 'Twitterbot', 'Slackbot', 'TelegramBot' ];
 
 	/**
 	 * Validates ?tr_access={token} before the shortcode renders and always
@@ -128,24 +137,39 @@ class TR_Parent_Dashboard {
 		exit;
 	}
 
+	/**
+	 * A request is a previewer only when it is HEAD, has no User-Agent at
+	 * all, or has a User-Agent that both (a) lacks "Mozilla" and (b)
+	 * matches one of the known crawler product tokens. Requiring the
+	 * absence of "Mozilla" is what stops this from misfiring on WhatsApp's
+	 * own in-app browser — a real human tap — which carries both "Mozilla/5.0"
+	 * and "WhatsApp/x.y.z" in the same UA string; a bare server-side
+	 * preview fetch never sends "Mozilla" at all.
+	 */
 	private static function is_link_previewer_request(): bool {
-		if ( isset( $_SERVER['REQUEST_METHOD'] ) && 'HEAD' === strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) ) {
-			return true;
-		}
-
+		$method     = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : '';
 		$user_agent = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
 
-		if ( '' === $user_agent ) {
-			return true;
-		}
+		$is_previewer = false;
 
-		foreach ( self::PREVIEWER_USER_AGENTS as $needle ) {
-			if ( false !== stripos( $user_agent, $needle ) ) {
-				return true;
+		if ( 'HEAD' === $method ) {
+			$is_previewer = true;
+		} elseif ( '' === $user_agent ) {
+			$is_previewer = true;
+		} elseif ( false === stripos( $user_agent, 'Mozilla' ) ) {
+			foreach ( self::PREVIEWER_USER_AGENTS as $needle ) {
+				if ( false !== stripos( $user_agent, $needle ) ) {
+					$is_previewer = true;
+					break;
+				}
 			}
 		}
 
-		return false;
+		if ( $is_previewer ) {
+			TR_Logger::debug( 'Skipped link-previewer request', [ 'method' => $method, 'user_agent' => $user_agent ] );
+		}
+
+		return $is_previewer;
 	}
 
 	/**
