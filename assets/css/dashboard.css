@@ -1,0 +1,127 @@
+.tr-dashboard {
+	max-width: 640px;
+	margin: 0 auto;
+	padding: 16px;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+	color: #1a2535;
+}
+
+.tr-dashboard__header h2,
+.tr-dashboard__login h2 {
+	color: #1a2535;
+	font-size: 1.3rem;
+	margin: 0 0 16px;
+}
+
+.tr-dashboard__login form p {
+	margin: 0 0 12px;
+}
+
+.tr-dashboard__login input[type="text"],
+.tr-dashboard__login input[type="password"] {
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid #cbd2da;
+	border-radius: 6px;
+	font-size: 1rem;
+	box-sizing: border-box;
+}
+
+.tr-dashboard__login input[type="submit"] {
+	background: #12c4c4;
+	color: #ffffff;
+	border: none;
+	padding: 10px 24px;
+	border-radius: 6px;
+	font-weight: 600;
+	font-size: 1rem;
+	cursor: pointer;
+}
+
+.tr-dashboard__empty {
+	background: #f4f5f7;
+	border-radius: 8px;
+	padding: 20px;
+	text-align: center;
+	color: #4a5568;
+}
+
+.tr-dashboard__cards {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.tr-dashboard__card {
+	background: #ffffff;
+	border: 1px solid #e2e5eb;
+	border-radius: 10px;
+	padding: 16px;
+	box-shadow: 0 1px 2px rgba(26, 37, 53, 0.06);
+}
+
+.tr-dashboard__card h3 {
+	margin: 0 0 4px;
+	font-size: 1.1rem;
+	color: #1a2535;
+}
+
+.tr-dashboard__program {
+	margin: 0 0 8px;
+	color: #4a5568;
+	font-size: 0.95rem;
+}
+
+.tr-dashboard__progress-label {
+	margin: 0 0 6px;
+	font-size: 0.9rem;
+	font-weight: 600;
+	color: #12c4c4;
+}
+
+.tr-dashboard__progress-bar {
+	background: #e2e5eb;
+	border-radius: 999px;
+	height: 8px;
+	overflow: hidden;
+	margin-bottom: 10px;
+}
+
+.tr-dashboard__progress-fill {
+	background: #12c4c4;
+	height: 100%;
+	border-radius: 999px;
+}
+
+.tr-dashboard__status {
+	display: inline-block;
+	font-size: 0.8rem;
+	font-weight: 600;
+	padding: 2px 10px;
+	border-radius: 999px;
+	background: #e6fbfb;
+	color: #0d9494;
+	margin: 0;
+	text-transform: capitalize;
+}
+
+.tr-dashboard__status--withdrawn,
+.tr-dashboard__status--archived {
+	background: #fdeaea;
+	color: #b3261e;
+}
+
+.tr-dashboard__footer {
+	margin-top: 24px;
+	font-size: 0.85rem;
+	color: #8a8f98;
+	text-align: center;
+}
+
+@media (min-width: 640px) {
+	.tr-dashboard__cards {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 16px;
+	}
+}

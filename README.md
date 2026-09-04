@@ -17,6 +17,12 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.3.0
+- New: Parents receive a welcome email with a secure set-password link when registered
+- New: Parent dashboard showing their children and course progress
+- New: Robotics → Settings page for choosing the dashboard page
+- New: Resend welcome email and WhatsApp row actions on the Families list
+
 ### v0.2.0
 - New: Programs, Families, Students and Enrollments admin screens
 - New: Family billing anchor set from the first child's enrollment date

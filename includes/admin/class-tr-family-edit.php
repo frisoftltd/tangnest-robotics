@@ -123,6 +123,10 @@ class TR_Family_Edit {
 
 		TR_Families::clear_composition_flag( $family_id );
 
+		if ( 'new' === $mode ) {
+			TR_Notifications::maybe_send_welcome_email( $user_id, $family_id );
+		}
+
 		wp_safe_redirect( add_query_arg( [
 			'page'    => TR_Admin_Menu::PAGE_FAMILIES,
 			'action'  => 'edit',

@@ -173,6 +173,10 @@ class TR_Student_Edit {
 		TR_Families::set_billing_anchor( $family_id, $enrolled_on );
 		TR_Families::flag_composition_change( $family_id );
 
+		if ( 'new' === $family_mode ) {
+			TR_Notifications::maybe_send_welcome_email( $user_id, $family_id );
+		}
+
 		wp_safe_redirect( add_query_arg( [
 			'page'    => TR_Admin_Menu::PAGE_STUDENTS,
 			'action'  => 'edit',

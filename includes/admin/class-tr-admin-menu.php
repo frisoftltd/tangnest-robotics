@@ -12,16 +12,21 @@ class TR_Admin_Menu {
 	const PAGE_FAMILIES = 'tangnest-robotics-families';
 	const PAGE_STUDENTS = 'tangnest-robotics-students';
 	const PAGE_PROGRAMS = 'tangnest-robotics-programs';
+	const PAGE_SETTINGS = 'tangnest-robotics-settings';
 
 	public function __construct() {
 		add_action( 'admin_menu', [ $this, 'register_menu' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'admin_notices', [ $this, 'render_composition_notices' ] );
+		add_action( 'admin_notices', [ $this, 'render_dashboard_page_notice' ] );
+		add_action( 'admin_notices', [ $this, 'render_action_notices' ] );
 
 		add_action( 'admin_init', [ 'TR_Family_Edit', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Student_Edit', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Programs_Page', 'maybe_handle_submit' ] );
+		add_action( 'admin_init', [ 'TR_Settings_Page', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ $this, 'maybe_handle_row_actions' ] );
+		add_action( 'admin_init', [ $this, 'maybe_handle_family_row_actions' ] );
 	}
 
 	public function register_menu(): void {
@@ -38,6 +43,7 @@ class TR_Admin_Menu {
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Families', 'tangnest-robotics' ), __( 'Families', 'tangnest-robotics' ), self::CAP, self::PAGE_FAMILIES, [ $this, 'render_families_page' ] );
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Students', 'tangnest-robotics' ), __( 'Students', 'tangnest-robotics' ), self::CAP, self::PAGE_STUDENTS, [ $this, 'render_students_page' ] );
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Programs', 'tangnest-robotics' ), __( 'Programs', 'tangnest-robotics' ), self::CAP, self::PAGE_PROGRAMS, [ $this, 'render_programs_page' ] );
+		add_submenu_page( self::PAGE_FAMILIES, __( 'Settings', 'tangnest-robotics' ), __( 'Settings', 'tangnest-robotics' ), self::CAP, self::PAGE_SETTINGS, [ $this, 'render_settings_page' ] );
 	}
 
 	public function enqueue_assets( string $hook ): void {
@@ -129,6 +135,101 @@ class TR_Admin_Menu {
 		}
 
 		TR_Programs_Page::render();
+	}
+
+	public function render_settings_page(): void {
+		if ( ! current_user_can( self::CAP ) ) {
+			wp_die( esc_html__( 'You do not have permission to access this page.', 'tangnest-robotics' ) );
+		}
+
+		TR_Settings_Page::render();
+	}
+
+	/**
+	 * Handles the Resend-welcome-email row action from the Families table.
+	 * The WhatsApp row action needs no handler — it's a plain outbound link.
+	 */
+	public function maybe_handle_family_row_actions(): void {
+		if ( ! isset( $_GET['tr_row_action'], $_GET['id'], $_GET['page'] ) ) {
+			return;
+		}
+
+		if ( self::PAGE_FAMILIES !== $_GET['page'] ) {
+			return;
+		}
+
+		$row_action = sanitize_key( wp_unslash( $_GET['tr_row_action'] ) );
+		$family_id  = absint( $_GET['id'] );
+
+		if ( 'resend_welcome' !== $row_action || $family_id <= 0 ) {
+			return;
+		}
+
+		check_admin_referer( 'tr_family_row_action_' . $family_id );
+
+		if ( ! current_user_can( self::CAP ) ) {
+			wp_die( esc_html__( 'You do not have permission to do that.', 'tangnest-robotics' ) );
+		}
+
+		$family = TR_Families::get( $family_id );
+		$sent   = false;
+
+		if ( null !== $family ) {
+			$sent = TR_Notifications::resend_welcome_email( (int) $family->parent_user_id, $family_id );
+		}
+
+		wp_safe_redirect( add_query_arg( [
+			'page'      => self::PAGE_FAMILIES,
+			'tr_notice' => $sent ? 'welcome_sent' : 'welcome_failed',
+		], admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	public function render_action_notices(): void {
+		if ( ! isset( $_GET['tr_notice'] ) ) {
+			return;
+		}
+
+		$screen = get_current_screen();
+		if ( null === $screen || false === strpos( $screen->id, 'tangnest-robotics' ) ) {
+			return;
+		}
+
+		$notice = sanitize_key( wp_unslash( $_GET['tr_notice'] ) );
+
+		if ( 'welcome_sent' === $notice ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Welcome email sent.', 'tangnest-robotics' ) . '</p></div>';
+		} elseif ( 'welcome_failed' === $notice ) {
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Welcome email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) . '</p></div>';
+		}
+	}
+
+	public function render_dashboard_page_notice(): void {
+		if ( ! current_user_can( self::CAP ) ) {
+			return;
+		}
+
+		$screen = get_current_screen();
+		if ( null === $screen || false === strpos( $screen->id, 'tangnest-robotics' ) ) {
+			return;
+		}
+
+		if ( '' !== TR_Parent_Dashboard::get_url() ) {
+			return;
+		}
+		?>
+		<div class="notice notice-warning is-dismissible">
+			<p>
+				<?php
+				printf(
+					/* translators: %s: link to the settings page */
+					esc_html__( 'No parent dashboard page is set — the welcome email cannot link anywhere until you choose one under %s.', 'tangnest-robotics' ),
+					'<a href="' . esc_url( admin_url( 'admin.php?page=' . self::PAGE_SETTINGS ) ) . '">' . esc_html__( 'Robotics → Settings', 'tangnest-robotics' ) . '</a>'
+				);
+				?>
+			</p>
+		</div>
+		<?php
 	}
 
 	/**

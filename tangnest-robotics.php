@@ -3,7 +3,7 @@
  * Plugin Name:       Tangnest Robotics — Class & Payment Manager
  * Plugin URI:        https://github.com/frisoftltd/tangnest-robotics
  * Description:       Manages robotics class enrollment, family billing, and IremboPay payments for Tangnest. Standalone — does not require WooCommerce or Tutor LMS.
- * Version:           0.2.0
+ * Version:           0.3.0
  * Author:            Fri Soft Ltd
  * Author URI:        https://frisoft.rw
  * License:           GPL-2.0-or-later
@@ -15,7 +15,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-define( 'TANGNEST_ROBOTICS_VERSION',     '0.2.0' );
+define( 'TANGNEST_ROBOTICS_VERSION',     '0.3.0' );
 define( 'TANGNEST_ROBOTICS_DB_VERSION',  '0.1.0' );
 define( 'TANGNEST_ROBOTICS_PLUGIN_FILE', __FILE__ );
 define( 'TANGNEST_ROBOTICS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
@@ -44,6 +44,8 @@ final class Tangnest_Robotics {
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-families.php';
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-students.php';
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-enrollments.php';
+		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-notifications.php';
+		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-parent-dashboard.php';
 
 		if ( is_admin() ) {
 			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-admin-menu.php';
@@ -52,6 +54,7 @@ final class Tangnest_Robotics {
 			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-family-edit.php';
 			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-students-table.php';
 			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-student-edit.php';
+			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-settings-page.php';
 		}
 	}
 
@@ -62,6 +65,8 @@ final class Tangnest_Robotics {
 		add_action( 'init', [ $this, 'load_textdomain' ] );
 		add_action( 'admin_init', [ $this, 'admin_init' ] );
 		add_filter( 'plugin_action_links_' . plugin_basename( TANGNEST_ROBOTICS_PLUGIN_FILE ), [ $this, 'plugin_action_links' ] );
+
+		new TR_Parent_Dashboard();
 
 		if ( is_admin() ) {
 			new TR_Admin_Menu();
