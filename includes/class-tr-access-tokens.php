@@ -110,6 +110,14 @@ class TR_Access_Tokens {
 	 * when it is still usable and its raw value is still cached, otherwise
 	 * mints a fresh one. This is what stops "send by email" from silently
 	 * invalidating a link just sent by WhatsApp minutes earlier.
+	 *
+	 * The cached raw value is untrusted until checked against the DB hash.
+	 * A stale cache entry (e.g. left over from an older version that used
+	 * a longer cache TTL, surviving until this code runs on an upgraded
+	 * site) would otherwise hand out a link for a token that no longer
+	 * matches what's stored — a real, previously-shipped bug, not a
+	 * hypothetical one. A mismatch here always means something is wrong,
+	 * so it's logged at error level.
 	 */
 	public static function get_or_generate_url( int $family_id ): string {
 		$family = TR_Families::get( $family_id );
@@ -117,9 +125,16 @@ class TR_Access_Tokens {
 		if ( $family && self::is_reusable( $family ) ) {
 			$cached_token = get_transient( self::raw_token_cache_key( $family_id ) );
 			if ( is_string( $cached_token ) && '' !== $cached_token ) {
-				$url = self::build_url( $cached_token );
-				if ( '' !== $url ) {
-					return $url;
+				if ( hash( 'sha256', $cached_token ) === $family->access_token_hash ) {
+					$url = self::build_url( $cached_token );
+					if ( '' !== $url ) {
+						return $url;
+					}
+				} else {
+					TR_Logger::error( 'Cached access token does not match stored hash — discarding stale cache', [
+						'family_id' => $family_id,
+					] );
+					delete_transient( self::raw_token_cache_key( $family_id ) );
 				}
 			}
 		}
@@ -154,6 +169,12 @@ class TR_Access_Tokens {
 	 * active" message without leaking which check failed.
 	 */
 	public static function validate_and_consume( string $token ): int {
+		TR_Logger::debug( 'Access-link validation attempt', [
+			'method'     => isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '',
+			'user_agent' => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
+			'ip'         => self::truncated_ip(),
+		] );
+
 		if ( self::is_rate_limited() ) {
 			return 0;
 		}
@@ -202,6 +223,12 @@ class TR_Access_Tokens {
 			return 0;
 		}
 
+		// The device slot is only spent once the login actually happens —
+		// wp_set_auth_cookie() runs first, and the increment follows it,
+		// never the other way round.
+		wp_set_current_user( $user->ID );
+		wp_set_auth_cookie( $user->ID, true );
+
 		$now           = current_time( 'mysql' );
 		$first_used    = $family->access_token_first_used ?: $now;
 		$new_use_count = (int) $family->access_token_use_count + 1;
@@ -212,9 +239,6 @@ class TR_Access_Tokens {
 		if ( self::STATUS_CONSUMED === $new_status ) {
 			delete_transient( self::raw_token_cache_key( (int) $family->id ) );
 		}
-
-		wp_set_current_user( $user->ID );
-		wp_set_auth_cookie( $user->ID, true );
 
 		TR_Logger::info( 'Access-link login', [
 			'family_id' => $family->id,

@@ -25,11 +25,41 @@ class TR_DB {
 	}
 
 	public static function maybe_upgrade(): void {
+		self::cleanup_legacy_access_token_cache();
+
 		if ( get_option( self::DB_VERSION_OPTION ) === TANGNEST_ROBOTICS_DB_VERSION ) {
 			return;
 		}
 		self::create_tables();
 		update_option( self::DB_VERSION_OPTION, TANGNEST_ROBOTICS_DB_VERSION );
+	}
+
+	/**
+	 * One-time cleanup, independent of the DB_VERSION gate above since
+	 * this isn't a schema change. v0.3.1 cached raw access tokens for 7
+	 * days; a site already on 0.3.1+ before upgrading to the fix in 0.3.3
+	 * can be carrying a stale tr_access_raw_* transient whose value no
+	 * longer matches the family's current token hash. Runs once, guarded
+	 * by its own option flag, then never again.
+	 */
+	private static function cleanup_legacy_access_token_cache(): void {
+		$flag = 'tangnest_robotics_legacy_token_cache_cleaned';
+		if ( get_option( $flag ) ) {
+			return;
+		}
+
+		global $wpdb;
+
+		$wpdb->query( $wpdb->prepare(
+			"DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+			$wpdb->esc_like( '_transient_tr_access_raw_' ) . '%'
+		) );
+		$wpdb->query( $wpdb->prepare(
+			"DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+			$wpdb->esc_like( '_transient_timeout_tr_access_raw_' ) . '%'
+		) );
+
+		update_option( $flag, current_time( 'mysql' ), false );
 	}
 
 	public static function create_tables(): void {

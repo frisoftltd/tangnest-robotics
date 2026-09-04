@@ -74,10 +74,25 @@ class TR_Parent_Dashboard {
 	}
 
 	/**
+	 * Link previewer/crawler User-Agent substrings. Messaging apps fetch a
+	 * link's Open Graph tags server-side the moment a URL is pasted into a
+	 * chat — before any human taps it — from their own infrastructure, on
+	 * a different IP than the eventual real visit. Left unchecked, that
+	 * fetch alone burns a device slot and can start the grace-window clock
+	 * before the parent ever sees the message.
+	 */
+	const PREVIEWER_USER_AGENTS = [ 'WhatsApp', 'facebookexternalhit', 'Twitterbot', 'Slackbot', 'TelegramBot' ];
+
+	/**
 	 * Validates ?tr_access={token} before the shortcode renders and always
 	 * redirects to the bare dashboard URL afterward — success or failure —
 	 * so the token never lingers in the browser history or referrer
 	 * headers, and a failed attempt looks identical to a first-time visit.
+	 *
+	 * Requests that look like link-preview fetchers are filtered out first
+	 * and never reach the token at all — no lookup, no consumption, no
+	 * redirect. They just fall through to the normal shortcode render,
+	 * which shows the login form since a bot is never logged in.
 	 */
 	public function maybe_handle_access_token(): void {
 		if ( ! isset( $_GET['tr_access'] ) ) {
@@ -86,6 +101,10 @@ class TR_Parent_Dashboard {
 
 		$page_id = (int) get_option( self::OPTION_PAGE_ID, 0 );
 		if ( $page_id <= 0 || ! is_page( $page_id ) ) {
+			return;
+		}
+
+		if ( self::is_link_previewer_request() ) {
 			return;
 		}
 
@@ -107,6 +126,26 @@ class TR_Parent_Dashboard {
 
 		wp_safe_redirect( self::get_url() );
 		exit;
+	}
+
+	private static function is_link_previewer_request(): bool {
+		if ( isset( $_SERVER['REQUEST_METHOD'] ) && 'HEAD' === strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) ) {
+			return true;
+		}
+
+		$user_agent = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
+
+		if ( '' === $user_agent ) {
+			return true;
+		}
+
+		foreach ( self::PREVIEWER_USER_AGENTS as $needle ) {
+			if ( false !== stripos( $user_agent, $needle ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

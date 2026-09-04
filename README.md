@@ -17,6 +17,11 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.3.3
+- Fix: access-link generation verifies a reused cached token against the family's stored hash before handing it out, and mints a fresh token on any mismatch — closes a real failure mode where a stale pre-0.3.2 token cache (7-day TTL) could survive alongside a newer, different token
+- Fix: one-time cleanup on upgrade removes any leftover `tr_access_raw_*` transients from before 0.3.2
+- Hardening (not the cause of the above): link-preview crawlers (WhatsApp, Facebook, Twitter, Slack, Telegram) and HEAD requests no longer touch or consume access tokens; device-slot increment now only happens after the auth cookie is actually set; every token validation attempt is debug-logged with User-Agent and method
+
 ### v0.3.2
 - Fix: sending an access link over a second channel no longer invalidates the one just sent — links are reused while still usable, with an explicit "Regenerate link" action to force a fresh one
 - Fix: WhatsApp access-link sends are now logged (success and failure), matching the email channel
