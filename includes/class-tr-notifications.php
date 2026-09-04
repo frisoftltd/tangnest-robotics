@@ -54,7 +54,7 @@ class TR_Notifications {
 		$reset_url     = network_site_url( 'wp-login.php?action=rp&key=' . $key . '&login=' . rawurlencode( $user->user_login ), 'login' );
 		$dashboard_url = TR_Parent_Dashboard::get_url();
 		$students      = self::get_family_students_for_email( $family_id );
-		$access_url    = TR_Access_Tokens::build_url( TR_Access_Tokens::generate( $family_id ) );
+		$access_url    = TR_Access_Tokens::get_or_generate_url( $family_id );
 
 		$body = self::render_welcome_template( $user, $reset_url, $dashboard_url, $students, $access_url );
 		$sent = self::send(
@@ -125,9 +125,10 @@ class TR_Notifications {
 	}
 
 	/**
-	 * Standalone "here's your link" email used by the admin Send/Resend
-	 * access-link row action — generates a fresh token, which invalidates
-	 * any link sent previously.
+	 * Standalone "here's your link" email used by the admin Send access-link
+	 * row action. Reuses the family's current token when it is still usable
+	 * (see TR_Access_Tokens::get_or_generate_url()) so sending by email
+	 * after already sending by WhatsApp doesn't kill the first link.
 	 */
 	public static function send_access_link_email( WP_User $user, int $family_id ): bool {
 		if ( '' === TR_Parent_Dashboard::get_url() ) {
@@ -135,7 +136,7 @@ class TR_Notifications {
 			return false;
 		}
 
-		$access_url = TR_Access_Tokens::build_url( TR_Access_Tokens::generate( $family_id ) );
+		$access_url = TR_Access_Tokens::get_or_generate_url( $family_id );
 		$body       = self::render_access_link_template( $user, $access_url );
 
 		return self::send(

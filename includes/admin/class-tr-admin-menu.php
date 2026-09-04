@@ -94,9 +94,17 @@ class TR_Admin_Menu {
 
 			<?php if ( $copy_link ) : ?>
 				<div class="notice notice-warning">
-					<p><strong><?php esc_html_e( 'New access link generated — the previous link has stopped working.', 'tangnest-robotics' ); ?></strong></p>
 					<p>
-						<input type="text" readonly value="<?php echo esc_attr( $copy_link ); ?>" id="tr-copy-link-field" class="large-text" onclick="this.select();" style="max-width:480px;">
+						<strong>
+							<?php
+							echo $copy_link['regenerated']
+								? esc_html__( 'New access link generated — the previous link has stopped working.', 'tangnest-robotics' )
+								: esc_html__( 'Here is the family\'s current access link.', 'tangnest-robotics' );
+							?>
+						</strong>
+					</p>
+					<p>
+						<input type="text" readonly value="<?php echo esc_attr( $copy_link['url'] ); ?>" id="tr-copy-link-field" class="large-text" onclick="this.select();" style="max-width:480px;">
 						<button type="button" class="button" onclick="var f=document.getElementById('tr-copy-link-field'); f.select(); f.setSelectionRange(0,99999); document.execCommand('copy');"><?php esc_html_e( 'Copy', 'tangnest-robotics' ); ?></button>
 					</p>
 				</div>
@@ -183,7 +191,7 @@ class TR_Admin_Menu {
 
 		$row_action    = sanitize_key( wp_unslash( $_GET['tr_row_action'] ) );
 		$family_id     = absint( $_GET['id'] );
-		$valid_actions = [ 'resend_welcome', 'send_link_whatsapp', 'send_link_email', 'copy_link', 'revoke_link' ];
+		$valid_actions = [ 'resend_welcome', 'send_link_whatsapp', 'send_link_email', 'copy_link', 'regenerate_link', 'revoke_link' ];
 
 		if ( ! in_array( $row_action, $valid_actions, true ) || $family_id <= 0 ) {
 			return;
@@ -229,9 +237,20 @@ class TR_Admin_Menu {
 
 		if ( 'copy_link' === $row_action ) {
 			if ( null !== $family ) {
-				$url = TR_Access_Tokens::build_url( TR_Access_Tokens::generate( $family_id ) );
+				$url = TR_Access_Tokens::get_or_generate_url( $family_id );
 				if ( '' !== $url ) {
-					set_transient( 'tr_copy_link_' . get_current_user_id(), $url, MINUTE_IN_SECONDS );
+					$this->store_copy_link( $url, false );
+				}
+			}
+			wp_safe_redirect( add_query_arg( [ 'page' => self::PAGE_FAMILIES, 'tr_show_link' => 1 ], admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( 'regenerate_link' === $row_action ) {
+			if ( null !== $family ) {
+				$url = TR_Access_Tokens::regenerate_url( $family_id );
+				if ( '' !== $url ) {
+					$this->store_copy_link( $url, true );
 				}
 			}
 			wp_safe_redirect( add_query_arg( [ 'page' => self::PAGE_FAMILIES, 'tr_show_link' => 1 ], admin_url( 'admin.php' ) ) );
@@ -240,10 +259,18 @@ class TR_Admin_Menu {
 
 		if ( 'revoke_link' === $row_action ) {
 			if ( null !== $family ) {
-				TR_Families::revoke_access_token( $family_id );
+				TR_Access_Tokens::revoke( $family_id );
 			}
 			$this->redirect_with_notice( 'link_revoked' );
 		}
+	}
+
+	private function store_copy_link( string $url, bool $regenerated ): void {
+		set_transient(
+			'tr_copy_link_' . get_current_user_id(),
+			[ 'url' => $url, 'regenerated' => $regenerated ],
+			MINUTE_IN_SECONDS
+		);
 	}
 
 	private function redirect_with_notice( string $notice ): void {
@@ -258,21 +285,26 @@ class TR_Admin_Menu {
 	 * Builds the pre-filled WhatsApp message from spec Task 3, carrying a
 	 * fresh access link (never a password-reset key). Same escaping rules
 	 * as before: esc_attr() + urlencode() per line, lowercase "%0a" join,
-	 * final URL never esc_url()'d.
+	 * final URL never esc_url()'d. Logs both outcomes — matching the
+	 * 'Email sent' / 'Email failed to send' pair in TR_Notifications::send()
+	 * — since this channel has no other choke point to log from.
 	 */
 	private function build_access_link_whatsapp_url( object $family ): string {
 		$phone = get_user_meta( (int) $family->parent_user_id, 'phone_number', true );
 		if ( ! preg_match( '/^07\d{8}$/', $phone ) ) {
+			TR_Logger::error( 'WhatsApp access link not sent: no valid phone number on file', [ 'family_id' => $family->id ] );
 			return '';
 		}
 
 		$user = get_userdata( (int) $family->parent_user_id );
 		if ( ! $user ) {
+			TR_Logger::error( 'WhatsApp access link not sent: parent user not found', [ 'family_id' => $family->id ] );
 			return '';
 		}
 
-		$access_url = TR_Access_Tokens::build_url( TR_Access_Tokens::generate( (int) $family->id ) );
+		$access_url = TR_Access_Tokens::get_or_generate_url( (int) $family->id );
 		if ( '' === $access_url ) {
+			TR_Logger::error( 'WhatsApp access link not sent: no dashboard page configured', [ 'family_id' => $family->id ] );
 			return '';
 		}
 
@@ -290,6 +322,8 @@ class TR_Admin_Menu {
 		}, $lines );
 
 		$text = implode( '%0a', $encoded_lines );
+
+		TR_Logger::info( 'WhatsApp access link sent', [ 'family_id' => $family->id, 'phone' => $whatsapp_number ] );
 
 		return 'https://web.whatsapp.com/send?phone=' . $whatsapp_number . '&text=' . $text;
 	}

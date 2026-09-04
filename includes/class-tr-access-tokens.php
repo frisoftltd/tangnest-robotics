@@ -38,7 +38,23 @@ class TR_Access_Tokens {
 	/**
 	 * Generates a fresh token, overwriting (and thereby invalidating) any
 	 * existing one for this family. The raw token is returned ONCE — only
-	 * its SHA-256 hash is ever persisted, logged, or displayed again.
+	 * its SHA-256 hash is ever persisted in the families table, logged, or
+	 * displayed again.
+	 *
+	 * It is also cached briefly in a transient (see raw_token_cache_key())
+	 * so that get_or_generate_url() can hand the SAME link to a second
+	 * send channel shortly after the first, instead of every "send"
+	 * silently killing the link a different channel just delivered. This
+	 * is a convenience cache, not the source of truth — is_reusable()
+	 * always checks the real DB-tracked status first, so a token that has
+	 * genuinely expired its window is never handed out just because the
+	 * cache entry is still warm.
+	 *
+	 * The cache TTL is capped to the grace window, never the (much longer)
+	 * unused-link expiry — the raw token must not sit in wp_options any
+	 * longer than the token itself is meaningfully reusable for. If the
+	 * cache has expired by the time a second send happens, get_or_generate_url()
+	 * mints a fresh token rather than fail; see its docblock.
 	 */
 	public static function generate( int $family_id ): string {
 		$token = bin2hex( random_bytes( 32 ) );
@@ -48,6 +64,7 @@ class TR_Access_Tokens {
 		$expires = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) + self::unused_expiry_days() * DAY_IN_SECONDS );
 
 		TR_Families::set_access_token( $family_id, $hash, $now, $expires );
+		set_transient( self::raw_token_cache_key( $family_id ), $token, self::grace_window_minutes() * MINUTE_IN_SECONDS );
 
 		return $token;
 	}
@@ -59,6 +76,73 @@ class TR_Access_Tokens {
 		}
 
 		return add_query_arg( 'tr_access', $token, $dashboard_url );
+	}
+
+	/**
+	 * True when the family's current token can still be handed out to a
+	 * new send channel without generating a replacement: unused-and-not-
+	 * expired, or active-and-still-inside-its-grace-window-with-a-device-
+	 * slot-free. Consumed, revoked, and expired tokens are never reusable.
+	 */
+	public static function is_reusable( object $family ): bool {
+		if ( empty( $family->access_token_hash ) ) {
+			return false;
+		}
+
+		$status = $family->access_token_status ?? self::STATUS_UNUSED;
+
+		if ( self::STATUS_UNUSED === $status ) {
+			$expires_ts = $family->access_token_expires ? strtotime( $family->access_token_expires ) : 0;
+			return $expires_ts > current_time( 'timestamp' );
+		}
+
+		if ( self::STATUS_ACTIVE === $status ) {
+			$deadline = strtotime( $family->access_token_first_used ) + self::grace_window_minutes() * MINUTE_IN_SECONDS;
+			return current_time( 'timestamp' ) <= $deadline
+				&& (int) $family->access_token_use_count < self::max_devices();
+		}
+
+		return false;
+	}
+
+	/**
+	 * The URL every "send" action should use: reuses the existing token
+	 * when it is still usable and its raw value is still cached, otherwise
+	 * mints a fresh one. This is what stops "send by email" from silently
+	 * invalidating a link just sent by WhatsApp minutes earlier.
+	 */
+	public static function get_or_generate_url( int $family_id ): string {
+		$family = TR_Families::get( $family_id );
+
+		if ( $family && self::is_reusable( $family ) ) {
+			$cached_token = get_transient( self::raw_token_cache_key( $family_id ) );
+			if ( is_string( $cached_token ) && '' !== $cached_token ) {
+				$url = self::build_url( $cached_token );
+				if ( '' !== $url ) {
+					return $url;
+				}
+			}
+		}
+
+		return self::build_url( self::generate( $family_id ) );
+	}
+
+	/**
+	 * Always mints a fresh token regardless of reusability — the explicit
+	 * "Regenerate link" admin action, and the escape hatch for a lost
+	 * phone or cleared browser.
+	 */
+	public static function regenerate_url( int $family_id ): string {
+		return self::build_url( self::generate( $family_id ) );
+	}
+
+	public static function revoke( int $family_id ): void {
+		TR_Families::revoke_access_token( $family_id );
+		delete_transient( self::raw_token_cache_key( $family_id ) );
+	}
+
+	private static function raw_token_cache_key( int $family_id ): string {
+		return 'tr_access_raw_' . $family_id;
 	}
 
 	/**
@@ -97,6 +181,7 @@ class TR_Access_Tokens {
 
 			if ( $window_passed || $devices_full ) {
 				TR_Families::set_token_status( (int) $family->id, self::STATUS_CONSUMED );
+				delete_transient( self::raw_token_cache_key( (int) $family->id ) );
 				self::record_failure();
 				return 0;
 			}
@@ -123,6 +208,10 @@ class TR_Access_Tokens {
 		$new_status    = $new_use_count >= self::max_devices() ? self::STATUS_CONSUMED : self::STATUS_ACTIVE;
 
 		TR_Families::record_token_use( (int) $family->id, $first_used, $now, $new_use_count, $new_status );
+
+		if ( self::STATUS_CONSUMED === $new_status ) {
+			delete_transient( self::raw_token_cache_key( (int) $family->id ) );
+		}
 
 		wp_set_current_user( $user->ID );
 		wp_set_auth_cookie( $user->ID, true );

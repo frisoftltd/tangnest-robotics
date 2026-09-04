@@ -186,6 +186,13 @@ class TR_Families_Table extends WP_List_Table {
 		);
 
 		if ( ! empty( $item->access_token_hash ) ) {
+			$actions['regenerate_link'] = sprintf(
+				'<a href="%s" onclick="return confirm(\'%s\');">%s</a>',
+				esc_url( $this->row_action_url( $item->id, 'regenerate_link' ) ),
+				esc_js( __( 'Generate a fresh access link for this family? The current link (on any device that has not yet consumed it) will stop working.', 'tangnest-robotics' ) ),
+				esc_html__( 'Regenerate link', 'tangnest-robotics' )
+			);
+
 			$actions['revoke_link'] = sprintf(
 				'<a href="%s" onclick="return confirm(\'%s\');">%s</a>',
 				esc_url( $this->row_action_url( $item->id, 'revoke_link' ) ),

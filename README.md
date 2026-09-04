@@ -17,6 +17,11 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.3.2
+- Fix: sending an access link over a second channel no longer invalidates the one just sent — links are reused while still usable, with an explicit "Regenerate link" action to force a fresh one
+- Fix: WhatsApp access-link sends are now logged (success and failure), matching the email channel
+- Fix: the raw-token cache used for reuse is capped to the grace window (was 7 days) and cleared as soon as a token is consumed
+
 ### v0.3.1
 - New: Passwordless parent access via a private link, sendable over WhatsApp
 - New: Links bind to the devices that open them and stop working afterwards
