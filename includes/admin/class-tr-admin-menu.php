@@ -77,11 +77,33 @@ class TR_Admin_Menu {
 	private function render_families_list(): void {
 		$table = new TR_Families_Table();
 		$table->prepare_items();
+
+		$copy_link = null;
+		if ( isset( $_GET['tr_show_link'] ) ) {
+			$key       = 'tr_copy_link_' . get_current_user_id();
+			$copy_link = get_transient( $key );
+			if ( $copy_link ) {
+				delete_transient( $key );
+			}
+		}
 		?>
 		<div class="wrap tr-admin-wrap">
 			<h1 class="wp-heading-inline"><?php esc_html_e( 'Families', 'tangnest-robotics' ); ?></h1>
 			<a href="<?php echo esc_url( add_query_arg( [ 'page' => self::PAGE_FAMILIES, 'action' => 'add' ], admin_url( 'admin.php' ) ) ); ?>" class="page-title-action"><?php esc_html_e( 'Add New', 'tangnest-robotics' ); ?></a>
 			<hr class="wp-header-end">
+
+			<?php if ( $copy_link ) : ?>
+				<div class="notice notice-warning">
+					<p><strong><?php esc_html_e( 'New access link generated — the previous link has stopped working.', 'tangnest-robotics' ); ?></strong></p>
+					<p>
+						<input type="text" readonly value="<?php echo esc_attr( $copy_link ); ?>" id="tr-copy-link-field" class="large-text" onclick="this.select();" style="max-width:480px;">
+						<button type="button" class="button" onclick="var f=document.getElementById('tr-copy-link-field'); f.select(); f.setSelectionRange(0,99999); document.execCommand('copy');"><?php esc_html_e( 'Copy', 'tangnest-robotics' ); ?></button>
+					</p>
+				</div>
+			<?php elseif ( isset( $_GET['tr_show_link'] ) ) : ?>
+				<div class="notice notice-error"><p><?php esc_html_e( 'Could not generate a link — check that a dashboard page is configured under Robotics → Settings.', 'tangnest-robotics' ); ?></p></div>
+			<?php endif; ?>
+
 			<form method="get">
 				<input type="hidden" name="page" value="<?php echo esc_attr( self::PAGE_FAMILIES ); ?>">
 				<?php
@@ -146,8 +168,9 @@ class TR_Admin_Menu {
 	}
 
 	/**
-	 * Handles the Resend-welcome-email row action from the Families table.
-	 * The WhatsApp row action needs no handler — it's a plain outbound link.
+	 * Handles every row action from the Families table's parent-name column:
+	 * resend the welcome email, send/copy/revoke a passwordless access
+	 * link. WhatsApp send is the one branch that redirects off-site.
 	 */
 	public function maybe_handle_family_row_actions(): void {
 		if ( ! isset( $_GET['tr_row_action'], $_GET['id'], $_GET['page'] ) ) {
@@ -158,10 +181,11 @@ class TR_Admin_Menu {
 			return;
 		}
 
-		$row_action = sanitize_key( wp_unslash( $_GET['tr_row_action'] ) );
-		$family_id  = absint( $_GET['id'] );
+		$row_action    = sanitize_key( wp_unslash( $_GET['tr_row_action'] ) );
+		$family_id     = absint( $_GET['id'] );
+		$valid_actions = [ 'resend_welcome', 'send_link_whatsapp', 'send_link_email', 'copy_link', 'revoke_link' ];
 
-		if ( 'resend_welcome' !== $row_action || $family_id <= 0 ) {
+		if ( ! in_array( $row_action, $valid_actions, true ) || $family_id <= 0 ) {
 			return;
 		}
 
@@ -172,17 +196,102 @@ class TR_Admin_Menu {
 		}
 
 		$family = TR_Families::get( $family_id );
-		$sent   = false;
 
-		if ( null !== $family ) {
-			$sent = TR_Notifications::resend_welcome_email( (int) $family->parent_user_id, $family_id );
+		if ( 'resend_welcome' === $row_action ) {
+			$sent = null !== $family && TR_Notifications::resend_welcome_email( (int) $family->parent_user_id, $family_id );
+			$this->redirect_with_notice( $sent ? 'welcome_sent' : 'welcome_failed' );
 		}
 
+		if ( 'send_link_email' === $row_action ) {
+			$sent = false;
+			if ( null !== $family ) {
+				$user = get_userdata( (int) $family->parent_user_id );
+				if ( $user ) {
+					$sent = TR_Notifications::send_access_link_email( $user, $family_id );
+				}
+			}
+			$this->redirect_with_notice( $sent ? 'access_email_sent' : 'access_email_failed' );
+		}
+
+		if ( 'send_link_whatsapp' === $row_action ) {
+			$whatsapp_url = null !== $family ? $this->build_access_link_whatsapp_url( $family ) : '';
+			if ( '' === $whatsapp_url ) {
+				$this->redirect_with_notice( 'whatsapp_failed' );
+			}
+			// Deliberately wp_redirect() and NOT esc_url()'d — esc_url()
+			// would uppercase the lowercase "%0a" line breaks the WhatsApp
+			// message relies on. The URL is entirely developer-constructed
+			// (fixed host, our own token, sanitized phone), never
+			// user-supplied, so wp_redirect() is appropriate here.
+			wp_redirect( $whatsapp_url );
+			exit;
+		}
+
+		if ( 'copy_link' === $row_action ) {
+			if ( null !== $family ) {
+				$url = TR_Access_Tokens::build_url( TR_Access_Tokens::generate( $family_id ) );
+				if ( '' !== $url ) {
+					set_transient( 'tr_copy_link_' . get_current_user_id(), $url, MINUTE_IN_SECONDS );
+				}
+			}
+			wp_safe_redirect( add_query_arg( [ 'page' => self::PAGE_FAMILIES, 'tr_show_link' => 1 ], admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( 'revoke_link' === $row_action ) {
+			if ( null !== $family ) {
+				TR_Families::revoke_access_token( $family_id );
+			}
+			$this->redirect_with_notice( 'link_revoked' );
+		}
+	}
+
+	private function redirect_with_notice( string $notice ): void {
 		wp_safe_redirect( add_query_arg( [
 			'page'      => self::PAGE_FAMILIES,
-			'tr_notice' => $sent ? 'welcome_sent' : 'welcome_failed',
+			'tr_notice' => $notice,
 		], admin_url( 'admin.php' ) ) );
 		exit;
+	}
+
+	/**
+	 * Builds the pre-filled WhatsApp message from spec Task 3, carrying a
+	 * fresh access link (never a password-reset key). Same escaping rules
+	 * as before: esc_attr() + urlencode() per line, lowercase "%0a" join,
+	 * final URL never esc_url()'d.
+	 */
+	private function build_access_link_whatsapp_url( object $family ): string {
+		$phone = get_user_meta( (int) $family->parent_user_id, 'phone_number', true );
+		if ( ! preg_match( '/^07\d{8}$/', $phone ) ) {
+			return '';
+		}
+
+		$user = get_userdata( (int) $family->parent_user_id );
+		if ( ! $user ) {
+			return '';
+		}
+
+		$access_url = TR_Access_Tokens::build_url( TR_Access_Tokens::generate( (int) $family->id ) );
+		if ( '' === $access_url ) {
+			return '';
+		}
+
+		$whatsapp_number = '250' . preg_replace( '/^0/', '', $phone );
+
+		$lines = [
+			sprintf( __( 'Hello %s,', 'tangnest-robotics' ), $user->display_name ),
+			__( 'Here is your Tangnest Robotics parent page. It shows your children and their class progress.', 'tangnest-robotics' ),
+			$access_url,
+			__( 'Open it on the phone you want to use. The link stops working after a short while — if you lose it, just ask us for a new one.', 'tangnest-robotics' ),
+		];
+
+		$encoded_lines = array_map( static function ( $line ) {
+			return urlencode( esc_attr( $line ) );
+		}, $lines );
+
+		$text = implode( '%0a', $encoded_lines );
+
+		return 'https://web.whatsapp.com/send?phone=' . $whatsapp_number . '&text=' . $text;
 	}
 
 	public function render_action_notices(): void {
@@ -195,13 +304,22 @@ class TR_Admin_Menu {
 			return;
 		}
 
-		$notice = sanitize_key( wp_unslash( $_GET['tr_notice'] ) );
+		$notice   = sanitize_key( wp_unslash( $_GET['tr_notice'] ) );
+		$messages = [
+			'welcome_sent'        => [ 'success', __( 'Welcome email sent.', 'tangnest-robotics' ) ],
+			'welcome_failed'      => [ 'error', __( 'Welcome email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) ],
+			'access_email_sent'   => [ 'success', __( 'Access link email sent.', 'tangnest-robotics' ) ],
+			'access_email_failed' => [ 'error', __( 'Access link email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) ],
+			'whatsapp_failed'     => [ 'error', __( 'Could not build a WhatsApp link — check the parent has a valid phone number on file and that a dashboard page is configured.', 'tangnest-robotics' ) ],
+			'link_revoked'        => [ 'success', __( 'Access link revoked.', 'tangnest-robotics' ) ],
+		];
 
-		if ( 'welcome_sent' === $notice ) {
-			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Welcome email sent.', 'tangnest-robotics' ) . '</p></div>';
-		} elseif ( 'welcome_failed' === $notice ) {
-			echo '<div class="notice notice-error"><p>' . esc_html__( 'Welcome email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) . '</p></div>';
+		if ( ! isset( $messages[ $notice ] ) ) {
+			return;
 		}
+
+		[ $type, $text ] = $messages[ $notice ];
+		printf( '<div class="notice notice-%s is-dismissible"><p>%s</p></div>', esc_attr( $type ), esc_html( $text ) );
 	}
 
 	public function render_dashboard_page_notice(): void {

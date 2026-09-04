@@ -17,6 +17,12 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.3.1
+- New: Passwordless parent access via a private link, sendable over WhatsApp
+- New: Links bind to the devices that open them and stop working afterwards
+- New: One-click resend, copy and revoke actions on the Families screen
+- New: Link status column showing whether a parent has opened their link
+
 ### v0.3.0
 - New: Parents receive a welcome email with a secure set-password link when registered
 - New: Parent dashboard showing their children and course progress

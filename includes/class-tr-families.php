@@ -207,4 +207,76 @@ class TR_Families {
 		$families = array_values( array_diff( $families, [ $family_id ] ) );
 		update_option( self::REVIEW_OPTION, $families, false );
 	}
+
+	/**
+	 * Overwrites this family's access token, which invalidates any
+	 * previously issued link for it immediately (the old hash no longer
+	 * matches anything once replaced).
+	 */
+	public static function set_access_token( int $family_id, string $hash, string $created, string $expires ): void {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET access_token_hash = %s, access_token_created = %s, access_token_first_used = NULL, access_token_last_used = NULL, access_token_use_count = 0, access_token_status = %s, access_token_expires = %s, updated_at = %s WHERE id = %d",
+			[ $hash, $created, 'unused', $expires, current_time( 'mysql' ), $family_id ]
+		);
+		$wpdb->query( $sql );
+	}
+
+	public static function get_by_access_token_hash( string $hash ): ?object {
+		global $wpdb;
+		$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . self::table() . " WHERE access_token_hash = %s", [ $hash ] ) );
+
+		return $row ?: null;
+	}
+
+	public static function record_token_use( int $family_id, string $first_used, string $last_used, int $use_count, string $status ): void {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET access_token_first_used = %s, access_token_last_used = %s, access_token_use_count = %d, access_token_status = %s, updated_at = %s WHERE id = %d",
+			[ $first_used, $last_used, $use_count, $status, current_time( 'mysql' ), $family_id ]
+		);
+		$wpdb->query( $sql );
+	}
+
+	public static function set_token_status( int $family_id, string $status ): void {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET access_token_status = %s, updated_at = %s WHERE id = %d",
+			[ $status, current_time( 'mysql' ), $family_id ]
+		);
+		$wpdb->query( $sql );
+	}
+
+	public static function revoke_access_token( int $family_id ): void {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET access_token_hash = NULL, access_token_status = %s, updated_at = %s WHERE id = %d",
+			[ 'revoked', current_time( 'mysql' ), $family_id ]
+		);
+		$wpdb->query( $sql );
+	}
+
+	/**
+	 * Sweeps any 'active' token whose grace window has passed to
+	 * 'consumed'. Called opportunistically from dashboard load — request-time
+	 * validation in TR_Access_Tokens enforces the window regardless, this
+	 * just keeps stale rows from lingering in the admin status column.
+	 */
+	public static function expire_stale_active_tokens( int $grace_minutes ): int {
+		global $wpdb;
+
+		$cutoff = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) - $grace_minutes * MINUTE_IN_SECONDS );
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET access_token_status = %s, updated_at = %s WHERE access_token_status = %s AND access_token_first_used IS NOT NULL AND access_token_first_used < %s",
+			[ 'consumed', current_time( 'mysql' ), 'active', $cutoff ]
+		);
+		$wpdb->query( $sql );
+
+		return (int) $wpdb->rows_affected;
+	}
 }

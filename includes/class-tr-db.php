@@ -39,17 +39,25 @@ class TR_DB {
 
 		$families = self::table_families();
 		dbDelta( "CREATE TABLE {$families} (
-			id             BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-			parent_user_id BIGINT(20) UNSIGNED NOT NULL,
-			monthly_amount DECIMAL(12,2) NOT NULL DEFAULT '0.00',
-			currency       VARCHAR(10)  NOT NULL DEFAULT 'RWF',
-			billing_day    TINYINT(3)   UNSIGNED NOT NULL DEFAULT 1,
-			status         VARCHAR(20)  NOT NULL DEFAULT 'active',
-			notes          TEXT         DEFAULT NULL,
-			created_at     DATETIME     NOT NULL,
-			updated_at     DATETIME     NOT NULL,
+			id                       BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			parent_user_id           BIGINT(20) UNSIGNED NOT NULL,
+			monthly_amount           DECIMAL(12,2) NOT NULL DEFAULT '0.00',
+			currency                 VARCHAR(10)  NOT NULL DEFAULT 'RWF',
+			billing_day              TINYINT(3)   UNSIGNED NOT NULL DEFAULT 1,
+			status                   VARCHAR(20)  NOT NULL DEFAULT 'active',
+			notes                    TEXT         DEFAULT NULL,
+			access_token_hash        CHAR(64)     DEFAULT NULL,
+			access_token_created     DATETIME     DEFAULT NULL,
+			access_token_first_used  DATETIME     DEFAULT NULL,
+			access_token_last_used   DATETIME     DEFAULT NULL,
+			access_token_use_count   TINYINT(3)   UNSIGNED NOT NULL DEFAULT 0,
+			access_token_status      VARCHAR(20)  NOT NULL DEFAULT 'unused',
+			access_token_expires     DATETIME     DEFAULT NULL,
+			created_at               DATETIME     NOT NULL,
+			updated_at               DATETIME     NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY parent_user_id (parent_user_id),
+			UNIQUE KEY access_token_hash (access_token_hash),
 			KEY status (status)
 		) {$charset};" );
 

@@ -38,6 +38,41 @@
 	cursor: pointer;
 }
 
+.tr-dashboard__notice {
+	position: relative;
+	margin: 0 0 16px;
+	padding: 12px 36px 12px 14px;
+	border-radius: 8px;
+	font-size: 0.9rem;
+	line-height: 1.5;
+}
+
+.tr-dashboard__notice--token {
+	background: #e6fbfb;
+	color: #0d6b6b;
+	border: 1px solid #b6ecec;
+}
+
+.tr-dashboard__notice--dead {
+	background: #fdeaea;
+	color: #8a2a24;
+	border: 1px solid #f6c9c4;
+	padding-right: 14px;
+}
+
+.tr-dashboard__notice-dismiss {
+	position: absolute;
+	top: 6px;
+	right: 8px;
+	background: none;
+	border: none;
+	font-size: 1.1rem;
+	line-height: 1;
+	color: inherit;
+	cursor: pointer;
+	padding: 4px;
+}
+
 .tr-dashboard__empty {
 	background: #f4f5f7;
 	border-radius: 8px;

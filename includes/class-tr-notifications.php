@@ -54,8 +54,9 @@ class TR_Notifications {
 		$reset_url     = network_site_url( 'wp-login.php?action=rp&key=' . $key . '&login=' . rawurlencode( $user->user_login ), 'login' );
 		$dashboard_url = TR_Parent_Dashboard::get_url();
 		$students      = self::get_family_students_for_email( $family_id );
+		$access_url    = TR_Access_Tokens::build_url( TR_Access_Tokens::generate( $family_id ) );
 
-		$body = self::render_welcome_template( $user, $reset_url, $dashboard_url, $students );
+		$body = self::render_welcome_template( $user, $reset_url, $dashboard_url, $students, $access_url );
 		$sent = self::send(
 			$user->user_email,
 			__( 'Welcome to Tangnest Robotics — set up your account', 'tangnest-robotics' ),
@@ -117,9 +118,36 @@ class TR_Notifications {
 		return $rows;
 	}
 
-	private static function render_welcome_template( WP_User $user, string $reset_url, string $dashboard_url, array $students ): string {
+	private static function render_welcome_template( WP_User $user, string $reset_url, string $dashboard_url, array $students, string $access_url ): string {
 		ob_start();
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/welcome.php';
+		return ob_get_clean();
+	}
+
+	/**
+	 * Standalone "here's your link" email used by the admin Send/Resend
+	 * access-link row action — generates a fresh token, which invalidates
+	 * any link sent previously.
+	 */
+	public static function send_access_link_email( WP_User $user, int $family_id ): bool {
+		if ( '' === TR_Parent_Dashboard::get_url() ) {
+			TR_Logger::error( 'Could not send access-link email: no dashboard page configured', [ 'family_id' => $family_id ] );
+			return false;
+		}
+
+		$access_url = TR_Access_Tokens::build_url( TR_Access_Tokens::generate( $family_id ) );
+		$body       = self::render_access_link_template( $user, $access_url );
+
+		return self::send(
+			$user->user_email,
+			__( 'Your Tangnest Robotics parent page link', 'tangnest-robotics' ),
+			$body
+		);
+	}
+
+	private static function render_access_link_template( WP_User $user, string $access_url ): string {
+		ob_start();
+		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/access-link.php';
 		return ob_get_clean();
 	}
 }

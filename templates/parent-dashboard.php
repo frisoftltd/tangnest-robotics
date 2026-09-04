@@ -10,6 +10,12 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 <div class="tr-dashboard">
 	<?php if ( ! is_user_logged_in() ) : ?>
 
+		<?php if ( TR_Parent_Dashboard::consume_dead_token_notice() ) : ?>
+			<p class="tr-dashboard__notice tr-dashboard__notice--dead">
+				<?php esc_html_e( 'This link is no longer active. Contact Tangnest and we\'ll send you a new one.', 'tangnest-robotics' ); ?>
+			</p>
+		<?php endif; ?>
+
 		<div class="tr-dashboard__login">
 			<h2><?php esc_html_e( 'Parent Login', 'tangnest-robotics' ); ?></h2>
 			<?php
@@ -35,6 +41,13 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 		<?php else : ?>
 
 			<?php $students = TR_Students::get_list( [ 'family_id' => (int) $family->id, 'per_page' => 200 ] ); ?>
+
+			<?php if ( TR_Parent_Dashboard::consume_token_login_notice( $current_user->ID ) ) : ?>
+				<p class="tr-dashboard__notice tr-dashboard__notice--token" id="tr-token-notice">
+					<?php esc_html_e( 'You\'re signed in with your private link. For extra security you can set a password.', 'tangnest-robotics' ); ?>
+					<button type="button" class="tr-dashboard__notice-dismiss" onclick="document.getElementById('tr-token-notice').style.display='none';" aria-label="<?php esc_attr_e( 'Dismiss', 'tangnest-robotics' ); ?>">&times;</button>
+				</p>
+			<?php endif; ?>
 
 			<div class="tr-dashboard__header">
 				<h2>

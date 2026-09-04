@@ -28,6 +28,7 @@ class TR_Families_Table extends WP_List_Table {
 			'monthly_amount'   => __( 'Monthly Amount', 'tangnest-robotics' ),
 			'billing_day'      => __( 'Billing Day', 'tangnest-robotics' ),
 			'next_billing'     => __( 'Next Billing Date', 'tangnest-robotics' ),
+			'link_status'      => __( 'Access Link', 'tangnest-robotics' ),
 			'status'           => __( 'Status', 'tangnest-robotics' ),
 		];
 	}
@@ -139,6 +140,8 @@ class TR_Families_Table extends WP_List_Table {
 			case 'next_billing':
 				$next = TR_Families::next_billing_date( (int) $item->id );
 				return $next ? esc_html( $next ) : '&#8212;';
+			case 'link_status':
+				return esc_html( TR_Access_Tokens::status_label( $item ) );
 			case 'status':
 				return esc_html( ucfirst( $item->status ) );
 			default:
@@ -158,60 +161,47 @@ class TR_Families_Table extends WP_List_Table {
 			'edit' => sprintf( '<a href="%s">%s</a>', esc_url( $edit_url ), esc_html__( 'Edit', 'tangnest-robotics' ) ),
 		];
 
-		$resend_url = wp_nonce_url(
-			add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'tr_row_action' => 'resend_welcome', 'id' => $item->id ], admin_url( 'admin.php' ) ),
-			'tr_family_row_action_' . $item->id
-		);
 		$actions['resend_welcome'] = sprintf(
 			'<a href="%s">%s</a>',
-			esc_url( $resend_url ),
+			esc_url( $this->row_action_url( $item->id, 'resend_welcome' ) ),
 			esc_html__( 'Resend welcome email', 'tangnest-robotics' )
 		);
 
-		$whatsapp_url = $this->build_whatsapp_url( $item );
-		if ( '' !== $whatsapp_url ) {
-			// $whatsapp_url is deliberately NOT esc_url()'d — see build_whatsapp_url().
-			$actions['whatsapp'] = '<a href="' . $whatsapp_url . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'WhatsApp', 'tangnest-robotics' ) . '</a>';
+		$actions['send_link_whatsapp'] = sprintf(
+			'<a href="%s">%s</a>',
+			esc_url( $this->row_action_url( $item->id, 'send_link_whatsapp' ) ),
+			esc_html__( 'Send access link (WhatsApp)', 'tangnest-robotics' )
+		);
+
+		$actions['send_link_email'] = sprintf(
+			'<a href="%s">%s</a>',
+			esc_url( $this->row_action_url( $item->id, 'send_link_email' ) ),
+			esc_html__( 'Send access link (Email)', 'tangnest-robotics' )
+		);
+
+		$actions['copy_link'] = sprintf(
+			'<a href="%s">%s</a>',
+			esc_url( $this->row_action_url( $item->id, 'copy_link' ) ),
+			esc_html__( 'Copy link', 'tangnest-robotics' )
+		);
+
+		if ( ! empty( $item->access_token_hash ) ) {
+			$actions['revoke_link'] = sprintf(
+				'<a href="%s" onclick="return confirm(\'%s\');">%s</a>',
+				esc_url( $this->row_action_url( $item->id, 'revoke_link' ) ),
+				esc_js( __( 'Revoke this family\'s access link? They will no longer be able to use it.', 'tangnest-robotics' ) ),
+				esc_html__( 'Revoke', 'tangnest-robotics' )
+			);
 		}
 
 		return sprintf( '<a href="%s"><strong>%s</strong></a>%s', esc_url( $edit_url ), esc_html( $name ), $this->row_actions( $actions ) );
 	}
 
-	/**
-	 * Builds a pre-filled web.whatsapp.com link for this family's parent.
-	 * Every piece of text in the message is run through urlencode(), so the
-	 * only literal characters left in the URL are ours (scheme/host/query
-	 * keys and the lowercase "%0a" line breaks) — safe to emit without
-	 * esc_url(), which would uppercase "%0A" and make WhatsApp Web drop the
-	 * line breaks in the pre-filled message entirely.
-	 */
-	private function build_whatsapp_url( object $item ): string {
-		$phone = get_user_meta( (int) $item->parent_user_id, 'phone_number', true );
-		if ( ! preg_match( '/^07\d{8}$/', $phone ) ) {
-			return '';
-		}
-
-		$whatsapp_number = '250' . preg_replace( '/^0/', '', $phone );
-		$dashboard_url   = TR_Parent_Dashboard::get_url();
-		$name            = $item->display_name ?? '';
-
-		$lines = [
-			sprintf( __( 'Hi %s,', 'tangnest-robotics' ), $name ),
-			__( 'This is Tangnest Robotics.', 'tangnest-robotics' ),
-		];
-
-		if ( '' !== $dashboard_url ) {
-			$lines[] = __( 'You can view your child\'s classes and progress here:', 'tangnest-robotics' );
-			$lines[] = $dashboard_url;
-		}
-
-		$encoded_lines = array_map( static function ( $line ) {
-			return urlencode( esc_attr( $line ) );
-		}, $lines );
-
-		$text = implode( '%0a', $encoded_lines );
-
-		return 'https://web.whatsapp.com/send?phone=' . $whatsapp_number . '&text=' . $text;
+	private function row_action_url( int $family_id, string $action ): string {
+		return wp_nonce_url(
+			add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'tr_row_action' => $action, 'id' => $family_id ], admin_url( 'admin.php' ) ),
+			'tr_family_row_action_' . $family_id
+		);
 	}
 
 	public function no_items(): void {
