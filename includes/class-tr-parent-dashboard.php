@@ -49,6 +49,15 @@ class TR_Parent_Dashboard {
 	}
 
 	public function render_shortcode(): string {
+		// Fires on the request that follows a token redirect (the bare
+		// dashboard URL) as well as every other dashboard view — this is
+		// what distinguishes "cookie was never set" from "cookie was set
+		// but not honoured on the next request".
+		TR_Logger::debug( 'Dashboard shortcode rendering', [
+			'is_user_logged_in' => is_user_logged_in(),
+			'current_user_id'   => get_current_user_id(),
+		] );
+
 		$this->maybe_cleanup_stale_windows();
 
 		ob_start();
@@ -104,6 +113,10 @@ class TR_Parent_Dashboard {
 	 * which shows the login form since a bot is never logged in.
 	 */
 	public function maybe_handle_access_token(): void {
+		TR_Logger::debug( 'maybe_handle_access_token entered', [
+			'tr_access_present' => isset( $_GET['tr_access'] ),
+		] );
+
 		if ( ! isset( $_GET['tr_access'] ) ) {
 			return;
 		}
@@ -127,13 +140,18 @@ class TR_Parent_Dashboard {
 
 		$user_id = TR_Access_Tokens::validate_and_consume( $token );
 
+		TR_Logger::debug( 'validate_and_consume returned', [ 'user_id' => $user_id ] );
+
 		if ( $user_id > 0 ) {
 			set_transient( self::TOKEN_LOGIN_FLAG_PREFIX . $user_id, 1, HOUR_IN_SECONDS );
 		} else {
 			self::flag_dead_token_notice();
 		}
 
-		wp_safe_redirect( self::get_url() );
+		$redirect_url = self::get_url();
+		TR_Logger::debug( 'maybe_handle_access_token redirecting', [ 'redirect_url' => $redirect_url ] );
+
+		wp_safe_redirect( $redirect_url );
 		exit;
 	}
 

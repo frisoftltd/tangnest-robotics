@@ -34,12 +34,17 @@ class TR_Logger {
 	}
 
 	public static function log( string $message, string $level = 'info', array $context = [] ): void {
-		$dir  = self::ensure_log_dir();
-		$file = $dir . '/' . gmdate( 'Y-m-d' ) . '.log';
+		$dir = self::ensure_log_dir();
+
+		// Site (Kigali) time, not UTC — so log lines can be compared
+		// directly against created_at/updated_at columns, which are also
+		// written with current_time( 'mysql' ).
+		$now  = current_time( 'mysql' );
+		$file = $dir . '/' . substr( $now, 0, 10 ) . '.log';
 
 		$line = sprintf(
 			'[%s] %s: %s %s' . PHP_EOL,
-			gmdate( 'Y-m-d H:i:s' ),
+			$now,
 			strtoupper( $level ),
 			$message,
 			empty( $context ) ? '' : wp_json_encode( $context )
@@ -48,7 +53,8 @@ class TR_Logger {
 		error_log( $line, 3, $file );
 	}
 
-	public static function debug( string $message, array $context = [] ): void { self::log( $message, 'debug', $context ); }
-	public static function info( string $message, array $context = [] ): void  { self::log( $message, 'info', $context ); }
-	public static function error( string $message, array $context = [] ): void { self::log( $message, 'error', $context ); }
+	public static function debug( string $message, array $context = [] ): void   { self::log( $message, 'debug', $context ); }
+	public static function info( string $message, array $context = [] ): void    { self::log( $message, 'info', $context ); }
+	public static function warning( string $message, array $context = [] ): void { self::log( $message, 'warning', $context ); }
+	public static function error( string $message, array $context = [] ): void   { self::log( $message, 'error', $context ); }
 }

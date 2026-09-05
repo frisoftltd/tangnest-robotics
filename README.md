@@ -17,6 +17,10 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.3.6
+- Diagnostic: full logging of every access-link rejection path
+- Fix: log timestamps now use site (Kigali) time via `current_time( 'mysql' )` instead of UTC, so log lines and DB rows can be compared directly
+
 ### v0.3.5
 - Fix: WhatsApp access-link messages ran together with no line breaks — `wp_redirect()` sanitizes the Location header and strips every `%0d`/`%0a` as an HTTP response-splitting defense, silently deleting the message's line breaks after they were correctly assembled. The WhatsApp send now issues a raw `Location` header instead, bypassing that sanitizer for this fully self-constructed URL
 - Fix: the "this link is no longer active" notice now expires after 60 seconds (was 2 minutes) as a backstop, on top of the existing delete-on-read; confirmed the v0.3.4 WhatsApp-in-app-browser fix is intact in the working tree
