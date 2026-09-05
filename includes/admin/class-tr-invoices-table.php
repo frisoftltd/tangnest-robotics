@@ -33,7 +33,12 @@ class TR_Invoices_Table extends WP_List_Table {
 			'due_date'       => __( 'Due Date', 'tangnest-robotics' ),
 			'paid_at'        => __( 'Paid Date', 'tangnest-robotics' ),
 			'payment_method' => __( 'Method', 'tangnest-robotics' ),
+			'reminder'       => __( 'Reminders', 'tangnest-robotics' ),
 		];
+	}
+
+	protected function get_primary_column_name(): string {
+		return 'family';
 	}
 
 	protected function get_sortable_columns(): array {
@@ -209,7 +214,12 @@ class TR_Invoices_Table extends WP_List_Table {
 	public static function compute_summary( string $where_sql, array $params ): array {
 		global $wpdb;
 
-		$sql  = 'SELECT status, COALESCE(SUM(amount), 0) AS total ' . self::from_sql() . " WHERE {$where_sql} GROUP BY status";
+		// Must be i.status/i.amount, not bare column names — wp_tr_families
+		// also has a "status" column, and a bare "status" in SELECT/GROUP BY
+		// against this three-table join is an ambiguous column reference
+		// that MySQL rejects outright. The query then silently returns no
+		// rows, which is why every summary figure was showing zero.
+		$sql  = 'SELECT i.status, COALESCE(SUM(i.amount), 0) AS total ' . self::from_sql() . " WHERE {$where_sql} GROUP BY i.status";
 		$rows = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
 
 		$totals_by_status = [];
@@ -222,16 +232,18 @@ class TR_Invoices_Table extends WP_List_Table {
 
 	/**
 	 * Pure function, split out from compute_summary() so the maths can be
-	 * unit-tested without a database. "Invoiced" excludes cancelled
-	 * invoices (voided, never real revenue) but includes waived ones
-	 * (genuinely billed, then forgiven) — so collection_rate answers
-	 * "of what we actually meant to collect, how much came in".
+	 * unit-tested without a database. "Invoiced" is defined as exactly
+	 * collected + outstanding — a strict identity, not a separate sum —
+	 * so the two figures always reconcile regardless of filter. Cancelled
+	 * and waived invoices are both excluded: neither is money the family
+	 * still owes or that came in, so neither belongs in any of these four
+	 * figures. (v0.4.0 included waived in "invoiced", which broke this
+	 * identity whenever a waived invoice existed in the filtered set.)
 	 */
 	public static function totals_from_status_map( array $totals_by_status ): array {
 		$collected   = $totals_by_status['paid'] ?? 0.0;
 		$outstanding = ( $totals_by_status['pending'] ?? 0.0 ) + ( $totals_by_status['overdue'] ?? 0.0 );
-		$waived      = $totals_by_status['waived'] ?? 0.0;
-		$invoiced    = $collected + $outstanding + $waived;
+		$invoiced    = $collected + $outstanding;
 
 		$collection_rate = $invoiced > 0 ? round( ( $collected / $invoiced ) * 100, 1 ) : 0.0;
 
@@ -301,47 +313,99 @@ class TR_Invoices_Table extends WP_List_Table {
 			admin_url( 'admin.php' )
 		);
 
-		return sprintf( '<a href="%s">%s</a>%s', esc_url( $url ), esc_html( $name ), $this->row_actions( $this->row_actions_for( $item ) ) );
+		return sprintf( '<a href="%s">%s</a>%s', esc_url( $url ), esc_html( $name ), $this->render_actions_html( $this->row_actions_for( $item ) ) );
+	}
+
+	public function column_reminder( $item ): string {
+		if ( empty( $item->reminder_count ) ) {
+			return esc_html__( 'None sent', 'tangnest-robotics' );
+		}
+
+		$days_ago = $item->last_reminder_sent ? (int) floor( ( current_time( 'timestamp' ) - strtotime( $item->last_reminder_sent ) ) / DAY_IN_SECONDS ) : 0;
+
+		if ( $days_ago <= 0 ) {
+			return esc_html( sprintf(
+				/* translators: %d: number of reminders sent */
+				__( '%d sent, last today', 'tangnest-robotics' ),
+				(int) $item->reminder_count
+			) );
+		}
+
+		return esc_html( sprintf(
+			/* translators: 1: number of reminders sent, 2: days since the last one */
+			_n( '%1$d sent, last %2$d day ago', '%1$d sent, last %2$d days ago', $days_ago, 'tangnest-robotics' ),
+			(int) $item->reminder_count,
+			$days_ago
+		) );
+	}
+
+	/**
+	 * Builds the row-actions markup by hand instead of WP core's
+	 * row_actions() helper — that helper always joins actions with a
+	 * literal " | ", and there is no clean way to strip that via CSS alone
+	 * without also hiding the links. This gives every action its own
+	 * .tr-row-action--{key} class for the pill styling and per-action
+	 * (e.g. destructive) targeting in admin.css.
+	 */
+	private function render_actions_html( array $actions ): string {
+		$items = '';
+		foreach ( $actions as $key => $html ) {
+			$items .= '<span class="tr-row-action tr-row-action--' . esc_attr( $key ) . '">' . $html . '</span>';
+		}
+
+		return '<div class="row-actions tr-row-actions">' . $items . '</div>';
 	}
 
 	private function row_actions_for( object $item ): array {
-		$actions = [];
-
-		if ( ! in_array( $item->status, [ 'pending', 'overdue' ], true ) ) {
-			return $actions;
-		}
-
+		$actions      = [];
 		$nonce_action = 'tr_invoice_row_action_' . $item->id;
 
-		$actions['record_payment'] = sprintf(
-			'<a href="%s">%s</a>',
-			esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'action' => 'record_payment', 'id' => $item->id ], admin_url( 'admin.php' ) ) ),
-			esc_html__( 'Record payment', 'tangnest-robotics' )
-		);
+		if ( in_array( $item->status, [ 'pending', 'overdue' ], true ) ) {
+			$actions['record_payment'] = sprintf(
+				'<a href="%s">%s</a>',
+				esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'action' => 'record_payment', 'id' => $item->id ], admin_url( 'admin.php' ) ) ),
+				esc_html__( 'Record payment', 'tangnest-robotics' )
+			);
 
-		$actions['waive'] = sprintf(
-			'<a href="%s">%s</a>',
-			esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'action' => 'waive', 'id' => $item->id ], admin_url( 'admin.php' ) ) ),
-			esc_html__( 'Waive', 'tangnest-robotics' )
-		);
+			$actions['send_reminder_email'] = sprintf(
+				'<a href="%s">%s</a>',
+				esc_url( wp_nonce_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'tr_row_action' => 'send_reminder_email', 'id' => $item->id ], admin_url( 'admin.php' ) ), $nonce_action ) ),
+				esc_html__( 'Send reminder (Email)', 'tangnest-robotics' )
+			);
 
-		$actions['cancel'] = sprintf(
-			'<a href="%s" onclick="return confirm(\'%s\');">%s</a>',
-			esc_url( wp_nonce_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'tr_row_action' => 'cancel', 'id' => $item->id ], admin_url( 'admin.php' ) ), $nonce_action ) ),
-			esc_js( __( 'Cancel this invoice?', 'tangnest-robotics' ) ),
-			esc_html__( 'Cancel', 'tangnest-robotics' )
-		);
+			$whatsapp_url = wp_nonce_url(
+				add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'tr_row_action' => 'send_reminder_whatsapp', 'id' => $item->id ], admin_url( 'admin.php' ) ),
+				$nonce_action
+			);
+			// New tab: this link hits our own handler first (so the send is
+			// logged and reminder state recorded), which then issues the raw
+			// header() redirect to web.whatsapp.com — target="_blank" just
+			// means that final landing happens in a new tab instead of
+			// carrying the admin away from the list.
+			$actions['send_reminder_whatsapp'] = sprintf(
+				'<a href="%s" target="_blank" rel="noopener">%s</a>',
+				esc_url( $whatsapp_url ),
+				esc_html__( 'Send reminder (WhatsApp)', 'tangnest-robotics' )
+			);
 
-		$actions['send_reminder_email'] = sprintf(
-			'<a href="%s">%s</a>',
-			esc_url( wp_nonce_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'tr_row_action' => 'send_reminder_email', 'id' => $item->id ], admin_url( 'admin.php' ) ), $nonce_action ) ),
-			esc_html__( 'Send reminder (Email)', 'tangnest-robotics' )
-		);
+			$actions['waive'] = sprintf(
+				'<a href="%s">%s</a>',
+				esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'action' => 'waive', 'id' => $item->id ], admin_url( 'admin.php' ) ) ),
+				esc_html__( 'Waive', 'tangnest-robotics' )
+			);
 
-		$actions['send_reminder_whatsapp'] = sprintf(
+			$actions['cancel'] = sprintf(
+				'<a href="%s" onclick="return confirm(\'%s\');">%s</a>',
+				esc_url( wp_nonce_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'tr_row_action' => 'cancel', 'id' => $item->id ], admin_url( 'admin.php' ) ), $nonce_action ) ),
+				esc_js( __( 'Cancel this invoice?', 'tangnest-robotics' ) ),
+				esc_html__( 'Cancel', 'tangnest-robotics' )
+			);
+		}
+
+		$actions['view_family'] = sprintf(
 			'<a href="%s">%s</a>',
-			esc_url( wp_nonce_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'tr_row_action' => 'send_reminder_whatsapp', 'id' => $item->id ], admin_url( 'admin.php' ) ), $nonce_action ) ),
-			esc_html__( 'Send reminder (WhatsApp)', 'tangnest-robotics' )
+			esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'action' => 'edit', 'id' => $item->family_id ], admin_url( 'admin.php' ) ) ),
+			esc_html__( 'View family', 'tangnest-robotics' )
 		);
 
 		return $actions;

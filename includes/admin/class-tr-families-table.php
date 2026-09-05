@@ -43,6 +43,10 @@ class TR_Families_Table extends WP_List_Table {
 		];
 	}
 
+	protected function get_primary_column_name(): string {
+		return 'parent_name';
+	}
+
 	protected function get_views(): array {
 		$current  = isset( $_REQUEST['status'] ) ? sanitize_key( wp_unslash( $_REQUEST['status'] ) ) : '';
 		$base_url = admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_FAMILIES );
@@ -148,8 +152,6 @@ class TR_Families_Table extends WP_List_Table {
 			case 'last_payment':
 				$last = TR_Invoices::last_payment_for_family( (int) $item->id );
 				return $last && $last->paid_at ? esc_html( substr( $last->paid_at, 0, 10 ) ) : esc_html__( 'Never', 'tangnest-robotics' );
-			case 'link_status':
-				return esc_html( TR_Access_Tokens::status_label( $item ) );
 			case 'status':
 				return esc_html( ucfirst( $item->status ) );
 			default:
@@ -175,8 +177,12 @@ class TR_Families_Table extends WP_List_Table {
 			esc_html__( 'Resend welcome email', 'tangnest-robotics' )
 		);
 
+		// New tab: hits our own handler first (logs the send, generates or
+		// reuses the token), which then issues the raw header() redirect to
+		// web.whatsapp.com. Opening in a new tab just means that landing
+		// happens there instead of navigating the admin away from the list.
 		$actions['send_link_whatsapp'] = sprintf(
-			'<a href="%s">%s</a>',
+			'<a href="%s" target="_blank" rel="noopener">%s</a>',
 			esc_url( $this->row_action_url( $item->id, 'send_link_whatsapp' ) ),
 			esc_html__( 'Send access link (WhatsApp)', 'tangnest-robotics' )
 		);
@@ -187,17 +193,29 @@ class TR_Families_Table extends WP_List_Table {
 			esc_html__( 'Send access link (Email)', 'tangnest-robotics' )
 		);
 
-		$actions['copy_link'] = sprintf(
-			'<a href="%s">%s</a>',
-			esc_url( $this->row_action_url( $item->id, 'copy_link' ) ),
-			esc_html__( 'Copy link', 'tangnest-robotics' )
-		);
-
 		$actions['create_invoice'] = sprintf(
 			'<a href="%s">%s</a>',
 			esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'action' => 'create_invoice', 'id' => $item->id ], admin_url( 'admin.php' ) ) ),
 			esc_html__( 'Create invoice', 'tangnest-robotics' )
 		);
+
+		return sprintf( '<a href="%s"><strong>%s</strong></a>%s', esc_url( $edit_url ), esc_html( $name ), $this->render_actions_html( $actions ) );
+	}
+
+	/**
+	 * Copy link / Regenerate / Revoke live here, next to the status text
+	 * they act on, instead of crowding the Parent column with eight links.
+	 */
+	public function column_link_status( $item ): string {
+		$status_text = esc_html( TR_Access_Tokens::status_label( $item ) );
+
+		$actions = [
+			'copy_link' => sprintf(
+				'<a href="%s">%s</a>',
+				esc_url( $this->row_action_url( $item->id, 'copy_link' ) ),
+				esc_html__( 'Copy link', 'tangnest-robotics' )
+			),
+		];
 
 		if ( ! empty( $item->access_token_hash ) ) {
 			$actions['regenerate_link'] = sprintf(
@@ -215,7 +233,22 @@ class TR_Families_Table extends WP_List_Table {
 			);
 		}
 
-		return sprintf( '<a href="%s"><strong>%s</strong></a>%s', esc_url( $edit_url ), esc_html( $name ), $this->row_actions( $actions ) );
+		return $status_text . '<div class="tr-access-link-actions">' . $this->render_actions_html( $actions ) . '</div>';
+	}
+
+	/**
+	 * Builds row-actions markup by hand instead of WP core's row_actions()
+	 * helper — see the identical method in TR_Invoices_Table for why (that
+	 * helper always joins with a literal " | ", with no clean way to strip
+	 * it via CSS without also hiding the links).
+	 */
+	private function render_actions_html( array $actions ): string {
+		$items = '';
+		foreach ( $actions as $key => $html ) {
+			$items .= '<span class="tr-row-action tr-row-action--' . esc_attr( $key ) . '">' . $html . '</span>';
+		}
+
+		return '<div class="row-actions tr-row-actions">' . $items . '</div>';
 	}
 
 	private function row_action_url( int $family_id, string $action ): string {

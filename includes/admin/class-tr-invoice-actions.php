@@ -101,6 +101,12 @@ class TR_Invoice_Actions {
 
 		TR_Logger::info( 'Invoice created manually', [ 'family_id' => $family_id, 'invoice_id' => $invoice_id, 'period' => $period ] );
 
+		// Every invoice-creation path emails the parent — no opt-in, no
+		// toggle. The other two paths (cron, Generate Invoices Now) both
+		// run through TR_Invoice_Generator::run(), which already sends
+		// this; this row action is the one path that inserts directly.
+		TR_Notifications::send_invoice_issued_email( $family_id, $invoice_id );
+
 		wp_safe_redirect( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'tr_notice' => 'invoice_created' ], admin_url( 'admin.php' ) ) );
 		exit;
 	}
@@ -288,6 +294,12 @@ class TR_Invoice_Actions {
 
 		if ( 'send_reminder_email' === $row_action ) {
 			$sent = null !== $invoice && TR_Notifications::send_reminder_email( $invoice_id );
+			if ( $sent ) {
+				// Manual send — never touches reminder_stages_sent, so this
+				// can't suppress a later scheduled reminder for the same
+				// invoice. See TR_Invoices::record_manual_reminder().
+				TR_Invoices::record_manual_reminder( $invoice_id );
+			}
 			self::redirect_with_notice( $sent ? 'reminder_sent' : 'reminder_failed' );
 		}
 
@@ -296,6 +308,7 @@ class TR_Invoice_Actions {
 			if ( '' === $whatsapp_url ) {
 				self::redirect_with_notice( 'whatsapp_reminder_failed' );
 			}
+			TR_Invoices::record_manual_reminder( $invoice_id );
 			// See TR_Admin_Menu::build_access_link_whatsapp_url() for why
 			// this is a raw header() call, never wp_redirect()/esc_url().
 			header( 'Location: ' . $whatsapp_url );

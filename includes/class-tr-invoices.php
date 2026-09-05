@@ -258,4 +258,63 @@ class TR_Invoices {
 
 		return (float) $wpdb->get_var( $sql );
 	}
+
+	private static function stages_sent( ?string $csv ): array {
+		if ( empty( $csv ) ) {
+			return [];
+		}
+
+		return array_values( array_filter( array_map( 'trim', explode( ',', $csv ) ) ) );
+	}
+
+	/**
+	 * Called only by the automatic scheduler. Appends $stage to
+	 * reminder_stages_sent, which is what stops that stage from ever
+	 * firing twice for this invoice.
+	 */
+	public static function record_automatic_reminder( int $id, string $stage ): void {
+		global $wpdb;
+
+		$invoice = self::get( $id );
+		if ( null === $invoice ) {
+			return;
+		}
+
+		$stages = self::stages_sent( $invoice->reminder_stages_sent );
+		if ( ! in_array( $stage, $stages, true ) ) {
+			$stages[] = $stage;
+		}
+
+		$now = current_time( 'mysql' );
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET last_reminder_sent = %s, reminder_count = reminder_count + 1, reminder_stages_sent = %s, updated_at = %s WHERE id = %d",
+			[ $now, implode( ',', $stages ), $now, $id ]
+		);
+		$wpdb->query( $sql );
+	}
+
+	/**
+	 * Called by the admin "Send reminder" row actions. Deliberately never
+	 * touches reminder_stages_sent — an admin's manual nudge must not
+	 * suppress a later scheduled reminder for the same invoice.
+	 */
+	public static function record_manual_reminder( int $id ): void {
+		global $wpdb;
+
+		$now = current_time( 'mysql' );
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET last_reminder_sent = %s, reminder_count = reminder_count + 1, updated_at = %s WHERE id = %d",
+			[ $now, $now, $id ]
+		);
+		$wpdb->query( $sql );
+	}
+
+	public static function has_sent_stage( int $id, string $stage ): bool {
+		$invoice = self::get( $id );
+		if ( null === $invoice ) {
+			return false;
+		}
+
+		return in_array( $stage, self::stages_sent( $invoice->reminder_stages_sent ), true );
+	}
 }

@@ -17,6 +17,15 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.4.1
+- Fix: Invoice summary totals now reflect the filtered view correctly
+- Fix: Invoice rows were missing their actions
+- New: Row actions always visible and restyled for readability
+- New: Parents are emailed automatically when an invoice is created
+- New: Automatic payment reminders before and after the due date, configurable
+- New: Manual email and WhatsApp reminder actions on every invoice
+- Fix: WhatsApp actions open in a new tab instead of navigating away from admin
+
 ### v0.4.0
 - New: Monthly invoices generated automatically on each family's billing day
 - New: Invoices admin screen with status filters and collection summary

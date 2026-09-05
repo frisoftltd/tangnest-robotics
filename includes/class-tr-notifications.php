@@ -166,6 +166,14 @@ class TR_Notifications {
 			return false;
 		}
 
+		if ( ! is_email( $user->user_email ) ) {
+			TR_Logger::warning( 'Invoice created but no valid email on file — parent was not notified', [
+				'family_id'  => $family_id,
+				'invoice_id' => $invoice_id,
+			] );
+			return false;
+		}
+
 		$invoice = TR_Invoices::get( $invoice_id );
 		if ( null === $invoice ) {
 			return false;

@@ -18,6 +18,7 @@ class TR_Admin_Menu {
 	public function __construct() {
 		add_action( 'admin_menu', [ $this, 'register_menu' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
+		add_filter( 'admin_body_class', [ $this, 'filter_admin_body_class' ] );
 		add_action( 'admin_notices', [ $this, 'render_composition_notices' ] );
 		add_action( 'admin_notices', [ $this, 'render_dashboard_page_notice' ] );
 		add_action( 'admin_notices', [ $this, 'render_action_notices' ] );
@@ -62,6 +63,20 @@ class TR_Admin_Menu {
 			[],
 			TANGNEST_ROBOTICS_VERSION
 		);
+	}
+
+	/**
+	 * Scopes the always-visible-row-actions and pill-action CSS to only
+	 * this plugin's own screens — WooCommerce and Tutor LMS share this
+	 * install and must never see it.
+	 */
+	public function filter_admin_body_class( string $classes ): string {
+		$screen = get_current_screen();
+		if ( $screen && false !== strpos( $screen->id, 'tangnest-robotics' ) ) {
+			$classes .= ' tangnest-robotics-page ';
+		}
+
+		return $classes;
 	}
 
 	public function render_families_page(): void {

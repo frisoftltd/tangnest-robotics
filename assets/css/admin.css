@@ -89,3 +89,64 @@
 	background: #f0f0f1;
 	color: #646970;
 }
+
+/*
+ * Row actions on the Families and Invoices screens are the primary
+ * interaction, not a hover-revealed secondary convenience — WP core hides
+ * .row-actions until hover by default, which is wrong here. Scoped to
+ * .tangnest-robotics-page (set via admin_body_class) so nothing leaks onto
+ * WooCommerce or Tutor LMS screens sharing this install.
+ */
+.tangnest-robotics-page .row-actions {
+	visibility: visible;
+	opacity: 1;
+	left: auto;
+	position: static;
+}
+
+.tangnest-robotics-page .column-family,
+.tangnest-robotics-page .column-parent_name {
+	min-width: 220px;
+}
+
+.tangnest-robotics-page .tr-row-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 10px;
+	margin-top: 6px;
+}
+
+.tangnest-robotics-page .tr-row-action {
+	font-size: 13px;
+}
+
+.tangnest-robotics-page .tr-row-action a {
+	display: inline-block;
+	background: #f0f4f8;
+	color: #2c3e50;
+	padding: 3px 8px;
+	border-radius: 3px;
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.tangnest-robotics-page .tr-row-action a:hover {
+	background: #e2e8f0;
+	text-decoration: none;
+}
+
+.tangnest-robotics-page .tr-row-action--revoke_link a,
+.tangnest-robotics-page .tr-row-action--cancel a,
+.tangnest-robotics-page .tr-row-action--waive a {
+	color: #b32d2e;
+}
+
+.tangnest-robotics-page .tr-row-action--revoke_link a:hover,
+.tangnest-robotics-page .tr-row-action--cancel a:hover,
+.tangnest-robotics-page .tr-row-action--waive a:hover {
+	background: #fbe4e4;
+}
+
+.tangnest-robotics-page .tr-access-link-actions {
+	margin-top: 6px;
+}

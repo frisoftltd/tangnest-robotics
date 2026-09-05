@@ -2,10 +2,11 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
- * Schedules the daily invoice-generation job. Registered from two places —
- * the activation hook AND a plugins_loaded check — because this plugin's
- * usual deploy path is a file copy that never fires activation hooks, so
- * activation alone would leave the site with no cron event at all.
+ * Schedules the daily invoice-generation + reminder job. Registered from
+ * two places — the activation hook AND a plugins_loaded check — because
+ * this plugin's usual deploy path is a file copy that never fires
+ * activation hooks, so activation alone would leave the site with no cron
+ * event at all.
  */
 class TR_Cron {
 	const HOOK = 'tangnest_robotics_daily';
@@ -30,5 +31,6 @@ class TR_Cron {
 
 	public static function run(): void {
 		TR_Invoice_Generator::run();
+		TR_Reminder_Scheduler::run();
 	}
 }
