@@ -226,12 +226,19 @@ class TR_Admin_Menu {
 			if ( '' === $whatsapp_url ) {
 				$this->redirect_with_notice( 'whatsapp_failed' );
 			}
-			// Deliberately wp_redirect() and NOT esc_url()'d — esc_url()
-			// would uppercase the lowercase "%0a" line breaks the WhatsApp
-			// message relies on. The URL is entirely developer-constructed
-			// (fixed host, our own token, sanitized phone), never
-			// user-supplied, so wp_redirect() is appropriate here.
-			wp_redirect( $whatsapp_url );
+			// Deliberately a raw header() call — not wp_redirect() or
+			// wp_safe_redirect(), and NOT esc_url()'d. Both WP redirect
+			// functions run the Location value through wp_sanitize_redirect(),
+			// which strips every "%0d"/"%0a" (either case) as a defense
+			// against CRLF header-injection — that silently deletes the
+			// WhatsApp message's line breaks. esc_url() would additionally
+			// uppercase any surviving "%0a" to "%0A", which WhatsApp Web
+			// also ignores. Safe to bypass both here: every byte of
+			// $whatsapp_url is our own construction (fixed host, per-line
+			// urlencode()'d text, a phone number already validated against
+			// /^07\d{8}$/) — there is no untrusted input that could smuggle
+			// a raw CR/LF into the header.
+			header( 'Location: ' . $whatsapp_url );
 			exit;
 		}
 

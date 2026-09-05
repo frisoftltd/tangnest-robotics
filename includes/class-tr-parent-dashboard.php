@@ -193,13 +193,21 @@ class TR_Parent_Dashboard {
 			return;
 		}
 
-		set_transient( self::DEAD_TOKEN_FLAG_PREFIX . md5( $ip ), 1, 2 * MINUTE_IN_SECONDS );
+		// 60 seconds is a backstop only — the real guarantee is that
+		// consume_dead_token_notice() deletes this the instant it's read,
+		// so it can never outlive the page view that displays it. The TTL
+		// just bounds how long an unread flag (nobody reloaded the page)
+		// can sit in wp_options.
+		set_transient( self::DEAD_TOKEN_FLAG_PREFIX . md5( $ip ), 1, MINUTE_IN_SECONDS );
 	}
 
 	/**
 	 * Shown-once flag for "this link is no longer active", tracked
-	 * server-side by IP for the two minutes after the failed redirect —
-	 * never a URL parameter.
+	 * server-side by IP — never a URL parameter. Strictly one-shot: this
+	 * deletes the flag the moment it's read, before the template renders
+	 * anything with the result, so a single failure can never paint the
+	 * banner on a later, unrelated page view (including a successful one,
+	 * or one with no token at all).
 	 */
 	public static function consume_dead_token_notice(): bool {
 		$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
@@ -210,9 +218,7 @@ class TR_Parent_Dashboard {
 		$key     = self::DEAD_TOKEN_FLAG_PREFIX . md5( $ip );
 		$flagged = (bool) get_transient( $key );
 
-		if ( $flagged ) {
-			delete_transient( $key );
-		}
+		delete_transient( $key );
 
 		return $flagged;
 	}
