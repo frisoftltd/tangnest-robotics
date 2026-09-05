@@ -28,6 +28,8 @@ class TR_Families_Table extends WP_List_Table {
 			'monthly_amount'   => __( 'Monthly Amount', 'tangnest-robotics' ),
 			'billing_day'      => __( 'Billing Day', 'tangnest-robotics' ),
 			'next_billing'     => __( 'Next Billing Date', 'tangnest-robotics' ),
+			'balance'          => __( 'Balance', 'tangnest-robotics' ),
+			'last_payment'     => __( 'Last Payment', 'tangnest-robotics' ),
 			'link_status'      => __( 'Access Link', 'tangnest-robotics' ),
 			'status'           => __( 'Status', 'tangnest-robotics' ),
 		];
@@ -140,6 +142,12 @@ class TR_Families_Table extends WP_List_Table {
 			case 'next_billing':
 				$next = TR_Families::next_billing_date( (int) $item->id );
 				return $next ? esc_html( $next ) : '&#8212;';
+			case 'balance':
+				$balance = TR_Invoices::family_balance( (int) $item->id );
+				return esc_html( number_format( $balance, 2 ) ) . ' RWF';
+			case 'last_payment':
+				$last = TR_Invoices::last_payment_for_family( (int) $item->id );
+				return $last && $last->paid_at ? esc_html( substr( $last->paid_at, 0, 10 ) ) : esc_html__( 'Never', 'tangnest-robotics' );
 			case 'link_status':
 				return esc_html( TR_Access_Tokens::status_label( $item ) );
 			case 'status':
@@ -183,6 +191,12 @@ class TR_Families_Table extends WP_List_Table {
 			'<a href="%s">%s</a>',
 			esc_url( $this->row_action_url( $item->id, 'copy_link' ) ),
 			esc_html__( 'Copy link', 'tangnest-robotics' )
+		);
+
+		$actions['create_invoice'] = sprintf(
+			'<a href="%s">%s</a>',
+			esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'action' => 'create_invoice', 'id' => $item->id ], admin_url( 'admin.php' ) ) ),
+			esc_html__( 'Create invoice', 'tangnest-robotics' )
 		);
 
 		if ( ! empty( $item->access_token_hash ) ) {

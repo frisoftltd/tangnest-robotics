@@ -24,6 +24,11 @@ class TR_DB {
 		return $wpdb->prefix . 'tr_enrollments';
 	}
 
+	public static function table_invoices(): string {
+		global $wpdb;
+		return $wpdb->prefix . 'tr_invoices';
+	}
+
 	public static function maybe_upgrade(): void {
 		self::cleanup_legacy_access_token_cache();
 
@@ -137,6 +142,33 @@ class TR_DB {
 			KEY student_id (student_id),
 			KEY program_id (program_id),
 			KEY status (status)
+		) {$charset};" );
+
+		$invoices = self::table_invoices();
+		dbDelta( "CREATE TABLE {$invoices} (
+			id                        BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			family_id                 BIGINT(20) UNSIGNED NOT NULL,
+			period                    VARCHAR(7)   NOT NULL,
+			amount                    DECIMAL(12,2) NOT NULL,
+			currency                  VARCHAR(10)  NOT NULL DEFAULT 'RWF',
+			status                    VARCHAR(20)  NOT NULL DEFAULT 'pending',
+			due_date                  DATE         NOT NULL,
+			issued_at                 DATETIME     NOT NULL,
+			paid_at                   DATETIME     DEFAULT NULL,
+			payment_method            VARCHAR(50)  DEFAULT NULL,
+			payment_reference         VARCHAR(120) DEFAULT NULL,
+			recorded_by               BIGINT(20) UNSIGNED DEFAULT NULL,
+			waive_reason              TEXT         DEFAULT NULL,
+			student_snapshot          TEXT         DEFAULT NULL,
+			irembopay_invoice_number  VARCHAR(120) DEFAULT NULL,
+			irembopay_transaction_id  VARCHAR(120) DEFAULT NULL,
+			created_at                DATETIME     NOT NULL,
+			updated_at                DATETIME     NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY family_period (family_id, period),
+			KEY status (status),
+			KEY due_date (due_date),
+			KEY irembopay_invoice_number (irembopay_invoice_number)
 		) {$charset};" );
 	}
 }

@@ -153,6 +153,110 @@
 	text-align: center;
 }
 
+.tr-dashboard__section-title {
+	margin: 28px 0 12px;
+	font-size: 1.05rem;
+	color: #1a2535;
+}
+
+.tr-dashboard__due-card {
+	border-radius: 10px;
+	padding: 18px;
+	text-align: center;
+}
+
+.tr-dashboard__due-card--ok {
+	background: #e6fbfb;
+	border: 1px solid #b6ecec;
+}
+
+.tr-dashboard__due-card--due {
+	background: #fff8e6;
+	border: 1px solid #f6e3b0;
+}
+
+.tr-dashboard__due-card--overdue {
+	background: #fdeaea;
+	border: 1px solid #f6c9c4;
+}
+
+.tr-dashboard__due-amount {
+	margin: 0 0 4px;
+	font-size: 1.6rem;
+	font-weight: 700;
+	color: #1a2535;
+}
+
+.tr-dashboard__due-sub {
+	margin: 0;
+	font-size: 0.9rem;
+	color: #4a5568;
+}
+
+.tr-dashboard__invoice-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.tr-dashboard__invoice-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	background: #ffffff;
+	border: 1px solid #e2e5eb;
+	border-radius: 8px;
+	padding: 10px 14px;
+	font-size: 0.9rem;
+	flex-wrap: wrap;
+}
+
+.tr-dashboard__invoice-period {
+	font-weight: 600;
+	color: #1a2535;
+	min-width: 64px;
+}
+
+.tr-dashboard__invoice-amount {
+	color: #4a5568;
+}
+
+.tr-dashboard__invoice-meta {
+	color: #8a8f98;
+	font-size: 0.8rem;
+}
+
+.tr-badge {
+	display: inline-block;
+	padding: 2px 10px;
+	border-radius: 999px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	text-transform: capitalize;
+}
+
+.tr-badge--pending {
+	background: #fff3cd;
+	color: #8a6d00;
+}
+
+.tr-badge--overdue {
+	background: #fdeaea;
+	color: #b3261e;
+}
+
+.tr-badge--paid {
+	background: #e6fbfb;
+	color: #0d9494;
+}
+
+.tr-badge--waived,
+.tr-badge--cancelled {
+	background: #f0f0f1;
+	color: #646970;
+}
+
 @media (min-width: 640px) {
 	.tr-dashboard__cards {
 		display: grid;

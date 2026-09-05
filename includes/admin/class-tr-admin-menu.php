@@ -12,6 +12,7 @@ class TR_Admin_Menu {
 	const PAGE_FAMILIES = 'tangnest-robotics-families';
 	const PAGE_STUDENTS = 'tangnest-robotics-students';
 	const PAGE_PROGRAMS = 'tangnest-robotics-programs';
+	const PAGE_INVOICES = 'tangnest-robotics-invoices';
 	const PAGE_SETTINGS = 'tangnest-robotics-settings';
 
 	public function __construct() {
@@ -25,6 +26,9 @@ class TR_Admin_Menu {
 		add_action( 'admin_init', [ 'TR_Student_Edit', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Programs_Page', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Settings_Page', 'maybe_handle_submit' ] );
+		add_action( 'admin_init', [ 'TR_Invoice_Actions', 'maybe_handle_submit' ] );
+		add_action( 'admin_init', [ 'TR_Invoice_Actions', 'maybe_handle_row_actions' ] );
+		add_action( 'admin_init', [ 'TR_Invoice_Actions', 'maybe_handle_bulk_actions' ] );
 		add_action( 'admin_init', [ $this, 'maybe_handle_row_actions' ] );
 		add_action( 'admin_init', [ $this, 'maybe_handle_family_row_actions' ] );
 	}
@@ -43,6 +47,7 @@ class TR_Admin_Menu {
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Families', 'tangnest-robotics' ), __( 'Families', 'tangnest-robotics' ), self::CAP, self::PAGE_FAMILIES, [ $this, 'render_families_page' ] );
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Students', 'tangnest-robotics' ), __( 'Students', 'tangnest-robotics' ), self::CAP, self::PAGE_STUDENTS, [ $this, 'render_students_page' ] );
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Programs', 'tangnest-robotics' ), __( 'Programs', 'tangnest-robotics' ), self::CAP, self::PAGE_PROGRAMS, [ $this, 'render_programs_page' ] );
+		add_submenu_page( self::PAGE_FAMILIES, __( 'Invoices', 'tangnest-robotics' ), __( 'Invoices', 'tangnest-robotics' ), self::CAP, self::PAGE_INVOICES, [ $this, 'render_invoices_page' ] );
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Settings', 'tangnest-robotics' ), __( 'Settings', 'tangnest-robotics' ), self::CAP, self::PAGE_SETTINGS, [ $this, 'render_settings_page' ] );
 	}
 
@@ -65,9 +70,15 @@ class TR_Admin_Menu {
 		}
 
 		$action = isset( $_GET['action'] ) ? sanitize_key( wp_unslash( $_GET['action'] ) ) : 'list';
+		$id     = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
 
 		if ( in_array( $action, [ 'add', 'edit' ], true ) ) {
 			TR_Family_Edit::render();
+			return;
+		}
+
+		if ( 'create_invoice' === $action && $id > 0 ) {
+			TR_Invoice_Actions::render_create_invoice_form( $id );
 			return;
 		}
 
@@ -173,6 +184,49 @@ class TR_Admin_Menu {
 		}
 
 		TR_Settings_Page::render();
+	}
+
+	public function render_invoices_page(): void {
+		if ( ! current_user_can( self::CAP ) ) {
+			wp_die( esc_html__( 'You do not have permission to access this page.', 'tangnest-robotics' ) );
+		}
+
+		$action = isset( $_GET['action'] ) ? sanitize_key( wp_unslash( $_GET['action'] ) ) : 'list';
+		$id     = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
+
+		if ( 'record_payment' === $action && $id > 0 ) {
+			TR_Invoice_Actions::render_record_payment_form( $id );
+			return;
+		}
+
+		if ( 'waive' === $action && $id > 0 ) {
+			TR_Invoice_Actions::render_waive_form( $id );
+			return;
+		}
+
+		$this->render_invoices_list();
+	}
+
+	private function render_invoices_list(): void {
+		$table = new TR_Invoices_Table();
+		$table->prepare_items();
+		?>
+		<div class="wrap tr-admin-wrap">
+			<h1 class="wp-heading-inline"><?php esc_html_e( 'Invoices', 'tangnest-robotics' ); ?></h1>
+			<hr class="wp-header-end">
+
+			<?php $table->render_summary_bar(); ?>
+
+			<form method="get">
+				<input type="hidden" name="page" value="<?php echo esc_attr( self::PAGE_INVOICES ); ?>">
+				<?php
+				$table->views();
+				$table->search_box( __( 'Search by parent name', 'tangnest-robotics' ), 'tr-invoices' );
+				$table->display();
+				?>
+			</form>
+		</div>
+		<?php
 	}
 
 	/**
@@ -290,11 +344,12 @@ class TR_Admin_Menu {
 
 	/**
 	 * Builds the pre-filled WhatsApp message from spec Task 3, carrying a
-	 * fresh access link (never a password-reset key). Same escaping rules
-	 * as before: esc_attr() + urlencode() per line, lowercase "%0a" join,
-	 * final URL never esc_url()'d. Logs both outcomes — matching the
-	 * 'Email sent' / 'Email failed to send' pair in TR_Notifications::send()
-	 * — since this channel has no other choke point to log from.
+	 * fresh access link (never a password-reset key), via the shared
+	 * TR_Notifications::build_whatsapp_message_url() helper (also used by
+	 * the invoice-reminder WhatsApp send in TR_Invoice_Actions). Logs both
+	 * outcomes — matching the 'Email sent' / 'Email failed to send' pair in
+	 * TR_Notifications::send() — since this channel has no other choke
+	 * point to log from.
 	 */
 	private function build_access_link_whatsapp_url( object $family ): string {
 		$phone = get_user_meta( (int) $family->parent_user_id, 'phone_number', true );
@@ -315,8 +370,6 @@ class TR_Admin_Menu {
 			return '';
 		}
 
-		$whatsapp_number = '250' . preg_replace( '/^0/', '', $phone );
-
 		$lines = [
 			sprintf( __( 'Hello %s,', 'tangnest-robotics' ), $user->display_name ),
 			__( 'Here is your Tangnest Robotics parent page. It shows your children and their class progress.', 'tangnest-robotics' ),
@@ -324,15 +377,15 @@ class TR_Admin_Menu {
 			__( 'Open it on the phone you want to use. The link stops working after a short while — if you lose it, just ask us for a new one.', 'tangnest-robotics' ),
 		];
 
-		$encoded_lines = array_map( static function ( $line ) {
-			return urlencode( esc_attr( $line ) );
-		}, $lines );
+		$url = TR_Notifications::build_whatsapp_message_url( $phone, $lines );
 
-		$text = implode( '%0a', $encoded_lines );
+		if ( '' !== $url ) {
+			TR_Logger::info( 'WhatsApp access link sent', [ 'family_id' => $family->id ] );
+		} else {
+			TR_Logger::error( 'WhatsApp access link not sent: could not build message URL', [ 'family_id' => $family->id ] );
+		}
 
-		TR_Logger::info( 'WhatsApp access link sent', [ 'family_id' => $family->id, 'phone' => $whatsapp_number ] );
-
-		return 'https://web.whatsapp.com/send?phone=' . $whatsapp_number . '&text=' . $text;
+		return $url;
 	}
 
 	public function render_action_notices(): void {
@@ -347,12 +400,22 @@ class TR_Admin_Menu {
 
 		$notice   = sanitize_key( wp_unslash( $_GET['tr_notice'] ) );
 		$messages = [
-			'welcome_sent'        => [ 'success', __( 'Welcome email sent.', 'tangnest-robotics' ) ],
-			'welcome_failed'      => [ 'error', __( 'Welcome email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) ],
-			'access_email_sent'   => [ 'success', __( 'Access link email sent.', 'tangnest-robotics' ) ],
-			'access_email_failed' => [ 'error', __( 'Access link email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) ],
-			'whatsapp_failed'     => [ 'error', __( 'Could not build a WhatsApp link — check the parent has a valid phone number on file and that a dashboard page is configured.', 'tangnest-robotics' ) ],
-			'link_revoked'        => [ 'success', __( 'Access link revoked.', 'tangnest-robotics' ) ],
+			'welcome_sent'            => [ 'success', __( 'Welcome email sent.', 'tangnest-robotics' ) ],
+			'welcome_failed'          => [ 'error', __( 'Welcome email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) ],
+			'access_email_sent'       => [ 'success', __( 'Access link email sent.', 'tangnest-robotics' ) ],
+			'access_email_failed'     => [ 'error', __( 'Access link email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) ],
+			'whatsapp_failed'         => [ 'error', __( 'Could not build a WhatsApp link — check the parent has a valid phone number on file and that a dashboard page is configured.', 'tangnest-robotics' ) ],
+			'link_revoked'            => [ 'success', __( 'Access link revoked.', 'tangnest-robotics' ) ],
+			'payment_recorded'        => [ 'success', __( 'Payment recorded.', 'tangnest-robotics' ) ],
+			'invoice_waived'          => [ 'success', __( 'Invoice waived.', 'tangnest-robotics' ) ],
+			'invoice_cancelled'       => [ 'success', __( 'Invoice cancelled.', 'tangnest-robotics' ) ],
+			'reminder_sent'           => [ 'success', __( 'Reminder email sent.', 'tangnest-robotics' ) ],
+			'reminder_failed'         => [ 'error', __( 'Reminder email failed to send. Check WP Mail SMTP → Email Log.', 'tangnest-robotics' ) ],
+			'whatsapp_reminder_failed' => [ 'error', __( 'Could not build a WhatsApp reminder — check the parent has a valid phone number on file.', 'tangnest-robotics' ) ],
+			'marked_overdue'          => [ 'success', __( 'Selected invoices marked overdue.', 'tangnest-robotics' ) ],
+			'no_invoices_selected'    => [ 'error', __( 'No invoices were selected.', 'tangnest-robotics' ) ],
+			'invoice_created'         => [ 'success', __( 'Invoice created.', 'tangnest-robotics' ) ],
+			'invoice_create_failed'   => [ 'error', __( 'Could not create invoice — an invoice for that period may already exist.', 'tangnest-robotics' ) ],
 		];
 
 		if ( ! isset( $messages[ $notice ] ) ) {

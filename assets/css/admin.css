@@ -20,3 +20,72 @@
 .tr-inline-search input[type="text"] {
 	min-width: 260px;
 }
+
+.tr-invoice-summary {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin: 16px 0;
+}
+
+.tr-invoice-summary__item {
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 6px;
+	padding: 12px 20px;
+	min-width: 160px;
+}
+
+.tr-invoice-summary__label {
+	display: block;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: #646970;
+	margin-bottom: 4px;
+}
+
+.tr-invoice-summary__value {
+	display: block;
+	font-size: 20px;
+	font-weight: 600;
+	color: #1a2535;
+}
+
+.tr-invoice-summary__value--good {
+	color: #0d9494;
+}
+
+.tr-invoice-summary__value--bad {
+	color: #b3261e;
+}
+
+.tr-badge {
+	display: inline-block;
+	padding: 2px 10px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: capitalize;
+}
+
+.tr-badge--pending {
+	background: #fff3cd;
+	color: #8a6d00;
+}
+
+.tr-badge--overdue {
+	background: #fdeaea;
+	color: #b3261e;
+}
+
+.tr-badge--paid {
+	background: #e6fbfb;
+	color: #0d9494;
+}
+
+.tr-badge--waived,
+.tr-badge--cancelled {
+	background: #f0f0f1;
+	color: #646970;
+}

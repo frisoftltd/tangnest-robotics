@@ -97,7 +97,111 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 			<?php endif; ?>
 
-			<p class="tr-dashboard__footer"><?php esc_html_e( 'Payment details are coming soon.', 'tangnest-robotics' ); ?></p>
+			<?php
+			$invoices = TR_Invoices::get_by_family( (int) $family->id );
+
+			$due_invoices = array_values( array_filter( $invoices, static function ( $invoice ) {
+				return in_array( $invoice->status, [ 'pending', 'overdue' ], true );
+			} ) );
+			usort( $due_invoices, static function ( $a, $b ) {
+				return strcmp( $a->due_date, $b->due_date );
+			} );
+
+			$total_due = 0.0;
+			foreach ( $due_invoices as $invoice ) {
+				$total_due += (float) $invoice->amount;
+			}
+
+			$paid_invoices = array_values( array_filter( $invoices, static function ( $invoice ) {
+				return 'paid' === $invoice->status;
+			} ) );
+			?>
+
+			<h3 class="tr-dashboard__section-title"><?php esc_html_e( 'Amount Due', 'tangnest-robotics' ); ?></h3>
+
+			<?php if ( empty( $due_invoices ) ) : ?>
+
+				<div class="tr-dashboard__due-card tr-dashboard__due-card--ok">
+					<p class="tr-dashboard__due-amount"><?php esc_html_e( 'You\'re up to date', 'tangnest-robotics' ); ?></p>
+					<p class="tr-dashboard__due-sub"><?php esc_html_e( 'No payment is currently due.', 'tangnest-robotics' ); ?></p>
+				</div>
+
+			<?php else : ?>
+
+				<?php
+				$earliest_due = $due_invoices[0];
+				$day_diff     = (int) floor( ( strtotime( $earliest_due->due_date ) - current_time( 'timestamp' ) ) / DAY_IN_SECONDS );
+				$is_overdue   = 'overdue' === $earliest_due->status || $day_diff < 0;
+				?>
+				<div class="tr-dashboard__due-card <?php echo $is_overdue ? 'tr-dashboard__due-card--overdue' : 'tr-dashboard__due-card--due'; ?>">
+					<p class="tr-dashboard__due-amount"><?php echo esc_html( number_format( $total_due, 2 ) . ' ' . $earliest_due->currency ); ?></p>
+					<p class="tr-dashboard__due-sub">
+						<?php
+						if ( $is_overdue ) {
+							printf(
+								/* translators: 1: due date, 2: days overdue */
+								esc_html__( 'Was due %1$s — %2$d day(s) overdue', 'tangnest-robotics' ),
+								esc_html( $earliest_due->due_date ),
+								absint( abs( $day_diff ) )
+							);
+						} else {
+							printf(
+								/* translators: 1: due date, 2: days remaining */
+								esc_html__( 'Due %1$s — %2$d day(s) remaining', 'tangnest-robotics' ),
+								esc_html( $earliest_due->due_date ),
+								absint( $day_diff )
+							);
+						}
+						?>
+					</p>
+				</div>
+
+			<?php endif; ?>
+
+			<h3 class="tr-dashboard__section-title"><?php esc_html_e( 'Payment Schedule', 'tangnest-robotics' ); ?></h3>
+
+			<?php if ( empty( $invoices ) ) : ?>
+
+				<div class="tr-dashboard__empty"><p><?php esc_html_e( 'No invoices yet.', 'tangnest-robotics' ); ?></p></div>
+
+			<?php else : ?>
+
+				<div class="tr-dashboard__invoice-list">
+					<?php foreach ( $invoices as $invoice ) : ?>
+						<div class="tr-dashboard__invoice-row">
+							<span class="tr-dashboard__invoice-period"><?php echo esc_html( $invoice->period ); ?></span>
+							<span class="tr-dashboard__invoice-amount"><?php echo esc_html( number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency ); ?></span>
+							<span class="tr-badge tr-badge--<?php echo esc_attr( $invoice->status ); ?>"><?php echo esc_html( ucfirst( $invoice->status ) ); ?></span>
+						</div>
+					<?php endforeach; ?>
+				</div>
+
+			<?php endif; ?>
+
+			<?php if ( ! empty( $paid_invoices ) ) : ?>
+
+				<h3 class="tr-dashboard__section-title"><?php esc_html_e( 'History', 'tangnest-robotics' ); ?></h3>
+
+				<div class="tr-dashboard__invoice-list">
+					<?php foreach ( $paid_invoices as $invoice ) : ?>
+						<div class="tr-dashboard__invoice-row">
+							<span class="tr-dashboard__invoice-period"><?php echo esc_html( $invoice->period ); ?></span>
+							<span class="tr-dashboard__invoice-amount"><?php echo esc_html( number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency ); ?></span>
+							<span class="tr-dashboard__invoice-meta">
+								<?php
+								echo esc_html( $invoice->paid_at ? substr( $invoice->paid_at, 0, 10 ) : '' );
+								if ( ! empty( $invoice->payment_method ) ) {
+									echo ' &middot; ' . esc_html( ucfirst( str_replace( '_', ' ', $invoice->payment_method ) ) );
+								}
+								?>
+							</span>
+						</div>
+					<?php endforeach; ?>
+				</div>
+
+			<?php endif; ?>
+
+			<p class="tr-dashboard__footer"><?php esc_html_e( 'Online payment is coming soon. For now, payments are recorded by Tangnest directly.', 'tangnest-robotics' ); ?></p>
 
 		<?php endif; ?>
 

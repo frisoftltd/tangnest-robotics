@@ -151,4 +151,132 @@ class TR_Notifications {
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/access-link.php';
 		return ob_get_clean();
 	}
+
+	/**
+	 * Sent by TR_Invoice_Generator immediately after an invoice is created.
+	 */
+	public static function send_invoice_issued_email( int $family_id, int $invoice_id ): bool {
+		$family = TR_Families::get( $family_id );
+		if ( null === $family ) {
+			return false;
+		}
+
+		$user = get_userdata( (int) $family->parent_user_id );
+		if ( ! $user ) {
+			return false;
+		}
+
+		$invoice = TR_Invoices::get( $invoice_id );
+		if ( null === $invoice ) {
+			return false;
+		}
+
+		$dashboard_url = TR_Parent_Dashboard::get_url();
+		$students      = self::decode_invoice_snapshot( $invoice );
+
+		$body = self::render_invoice_issued_template( $user, $invoice, $students, $dashboard_url );
+
+		return self::send(
+			$user->user_email,
+			sprintf(
+				/* translators: %s: billing period, e.g. 2026-09 */
+				__( 'Tangnest Robotics — invoice for %s', 'tangnest-robotics' ),
+				$invoice->period
+			),
+			$body
+		);
+	}
+
+	/**
+	 * Used by the admin "Send reminder" row action on the Invoices screen.
+	 * Works for a pending or an overdue invoice — $days_overdue is 0 unless
+	 * the invoice is actually overdue.
+	 */
+	public static function send_reminder_email( int $invoice_id ): bool {
+		$invoice = TR_Invoices::get( $invoice_id );
+		if ( null === $invoice ) {
+			return false;
+		}
+
+		$family = TR_Families::get( (int) $invoice->family_id );
+		if ( null === $family ) {
+			return false;
+		}
+
+		$user = get_userdata( (int) $family->parent_user_id );
+		if ( ! $user ) {
+			return false;
+		}
+
+		$dashboard_url = TR_Parent_Dashboard::get_url();
+		$students      = self::decode_invoice_snapshot( $invoice );
+
+		$days_overdue = 0;
+		if ( 'overdue' === $invoice->status ) {
+			$days_overdue = max( 0, (int) floor( ( current_time( 'timestamp' ) - strtotime( $invoice->due_date ) ) / DAY_IN_SECONDS ) );
+		}
+
+		$body = self::render_reminder_template( $user, $invoice, $students, $dashboard_url, $days_overdue );
+
+		return self::send(
+			$user->user_email,
+			sprintf(
+				/* translators: %s: billing period, e.g. 2026-09 */
+				__( 'Reminder: Tangnest Robotics payment for %s', 'tangnest-robotics' ),
+				$invoice->period
+			),
+			$body
+		);
+	}
+
+	private static function decode_invoice_snapshot( object $invoice ): array {
+		if ( empty( $invoice->student_snapshot ) ) {
+			return [];
+		}
+
+		$decoded = json_decode( $invoice->student_snapshot, true );
+
+		return is_array( $decoded ) ? $decoded : [];
+	}
+
+	private static function render_invoice_issued_template( WP_User $user, object $invoice, array $students, string $dashboard_url ): string {
+		ob_start();
+		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/invoice-issued.php';
+		return ob_get_clean();
+	}
+
+	private static function render_reminder_template( WP_User $user, object $invoice, array $students, string $dashboard_url, int $days_overdue ): string {
+		ob_start();
+		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/reminder.php';
+		return ob_get_clean();
+	}
+
+	/**
+	 * Shared by every WhatsApp send in the plugin (access links, payment
+	 * reminders). Each line is esc_attr() + urlencode()'d individually,
+	 * then joined with a lowercase "%0a" — urlencode()'ing the already-joined
+	 * string would encode the "%0a" markers themselves and collapse every
+	 * line break. Returns '' if the phone isn't in 07XXXXXXXX format.
+	 *
+	 * The caller must emit the result via a raw header() call, never
+	 * wp_redirect()/wp_safe_redirect() (both run wp_sanitize_redirect(),
+	 * which strips "%0d"/"%0a" as a CRLF-injection defense) or esc_url()
+	 * (which uppercases any surviving "%0a" to "%0A") — either would delete
+	 * the line breaks WhatsApp Web needs to render the message.
+	 */
+	public static function build_whatsapp_message_url( string $phone, array $lines ): string {
+		if ( ! preg_match( '/^07\d{8}$/', $phone ) ) {
+			return '';
+		}
+
+		$whatsapp_number = '250' . preg_replace( '/^0/', '', $phone );
+
+		$encoded_lines = array_map( static function ( $line ) {
+			return urlencode( esc_attr( $line ) );
+		}, $lines );
+
+		$text = implode( '%0a', $encoded_lines );
+
+		return 'https://web.whatsapp.com/send?phone=' . $whatsapp_number . '&text=' . $text;
+	}
 }

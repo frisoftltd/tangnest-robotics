@@ -2,17 +2,27 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
- * Robotics → Settings: currently just the dashboard page picker.
+ * Robotics → Settings: the dashboard page picker, plus a manual trigger
+ * for invoice generation (needed for testing, and for the month cron
+ * inevitably doesn't fire).
  */
 class TR_Settings_Page {
-	const PAGE  = 'tangnest-robotics-settings';
-	const NONCE = 'tr_settings_save';
+	const PAGE            = 'tangnest-robotics-settings';
+	const NONCE           = 'tr_settings_save';
+	const GENERATE_NONCE  = 'tr_generate_invoices_now';
 
 	public static function maybe_handle_submit(): void {
-		if ( ! isset( $_POST['tr_settings_nonce'] ) ) {
+		if ( isset( $_POST['tr_settings_nonce'] ) ) {
+			self::handle_settings_save();
 			return;
 		}
 
+		if ( isset( $_POST['tr_generate_invoices_nonce'] ) ) {
+			self::handle_generate_now();
+		}
+	}
+
+	private static function handle_settings_save(): void {
 		check_admin_referer( self::NONCE, 'tr_settings_nonce' );
 
 		if ( ! current_user_can( 'manage_options' ) ) {
@@ -23,6 +33,19 @@ class TR_Settings_Page {
 		update_option( TR_Parent_Dashboard::OPTION_PAGE_ID, $page_id );
 
 		wp_safe_redirect( add_query_arg( [ 'page' => self::PAGE, 'updated' => 1 ], admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private static function handle_generate_now(): void {
+		check_admin_referer( self::GENERATE_NONCE, 'tr_generate_invoices_nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You do not have permission to do that.', 'tangnest-robotics' ) );
+		}
+
+		TR_Invoice_Generator::run();
+
+		wp_safe_redirect( add_query_arg( [ 'page' => self::PAGE, 'generated' => 1 ], admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -38,6 +61,10 @@ class TR_Settings_Page {
 
 			<?php if ( isset( $_GET['updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'tangnest-robotics' ); ?></p></div>
+			<?php endif; ?>
+
+			<?php if ( isset( $_GET['generated'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Invoice generation run complete. Check the Invoices screen and the plugin log for details.', 'tangnest-robotics' ); ?></p></div>
 			<?php endif; ?>
 
 			<form method="post">
@@ -61,6 +88,15 @@ class TR_Settings_Page {
 					</tr>
 				</table>
 				<?php submit_button( __( 'Save Settings', 'tangnest-robotics' ) ); ?>
+			</form>
+
+			<hr>
+
+			<h2><?php esc_html_e( 'Invoices', 'tangnest-robotics' ); ?></h2>
+			<form method="post">
+				<?php wp_nonce_field( self::GENERATE_NONCE, 'tr_generate_invoices_nonce' ); ?>
+				<p><?php esc_html_e( 'Runs the same daily job that checks every active family\'s billing day and creates any invoices that are due today. Safe to run more than once — an invoice already created for the current period is never duplicated.', 'tangnest-robotics' ); ?></p>
+				<?php submit_button( __( 'Generate Invoices Now', 'tangnest-robotics' ), 'secondary' ); ?>
 			</form>
 		</div>
 		<?php

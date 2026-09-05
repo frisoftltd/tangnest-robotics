@@ -17,6 +17,12 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.4.0
+- New: Monthly invoices generated automatically on each family's billing day
+- New: Invoices admin screen with status filters and collection summary
+- New: Record cash, bank and mobile money payments
+- New: Parents see their payment schedule and history on their dashboard
+
 ### v0.3.6
 - Diagnostic: full logging of every access-link rejection path
 - Fix: log timestamps now use site (Kigali) time via `current_time( 'mysql' )` instead of UTC, so log lines and DB rows can be compared directly
