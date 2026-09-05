@@ -259,6 +259,33 @@ class TR_Invoices {
 		return (float) $wpdb->get_var( $sql );
 	}
 
+	public static function get_by_irembopay_invoice_number( string $invoice_number ): ?object {
+		global $wpdb;
+		$row = $wpdb->get_row( $wpdb->prepare(
+			"SELECT * FROM " . self::table() . " WHERE irembopay_invoice_number = %s",
+			[ $invoice_number ]
+		) );
+
+		return $row ?: null;
+	}
+
+	/**
+	 * $expires_at is the same expiry moment we sent IremboPay in the
+	 * create-invoice request (see TR_Payment::create_new()), stored so a
+	 * later "should we reuse this invoice" decision can be made from our
+	 * own row — there is no IremboPay endpoint to ask for an invoice's
+	 * current status.
+	 */
+	public static function set_irembopay_reference( int $id, string $invoice_number, string $transaction_id, string $expires_at ): void {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET irembopay_invoice_number = %s, irembopay_transaction_id = %s, irembopay_expires_at = %s, updated_at = %s WHERE id = %d",
+			[ $invoice_number, $transaction_id, $expires_at, current_time( 'mysql' ), $id ]
+		);
+		$wpdb->query( $sql );
+	}
+
 	private static function stages_sent( ?string $csv ): array {
 		if ( empty( $csv ) ) {
 			return [];

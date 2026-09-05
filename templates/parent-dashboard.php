@@ -49,6 +49,12 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 				</p>
 			<?php endif; ?>
 
+			<?php if ( TR_Parent_Dashboard::just_paid() ) : ?>
+				<p class="tr-dashboard__notice tr-dashboard__notice--token">
+					<?php esc_html_e( 'Payment received — thank you! It may take a minute to appear below.', 'tangnest-robotics' ); ?>
+				</p>
+			<?php endif; ?>
+
 			<div class="tr-dashboard__header">
 				<h2>
 					<?php
@@ -154,6 +160,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 						}
 						?>
 					</p>
+					<?php if ( TR_IremboPay_Settings::is_enabled() ) : ?>
+						<a class="tr-payment-button tr-payment-button--dashboard" href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $earliest_due->id ) ); ?>"><?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?></a>
+					<?php endif; ?>
 				</div>
 
 			<?php endif; ?>
@@ -172,6 +181,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 							<span class="tr-dashboard__invoice-period"><?php echo esc_html( $invoice->period ); ?></span>
 							<span class="tr-dashboard__invoice-amount"><?php echo esc_html( number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency ); ?></span>
 							<span class="tr-badge tr-badge--<?php echo esc_attr( $invoice->status ); ?>"><?php echo esc_html( ucfirst( $invoice->status ) ); ?></span>
+							<?php if ( TR_IremboPay_Settings::is_enabled() && in_array( $invoice->status, [ 'pending', 'overdue' ], true ) ) : ?>
+								<a class="tr-payment-button tr-payment-button--small" href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $invoice->id ) ); ?>"><?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?></a>
+							<?php endif; ?>
 						</div>
 					<?php endforeach; ?>
 				</div>
@@ -201,7 +213,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 			<?php endif; ?>
 
-			<p class="tr-dashboard__footer"><?php esc_html_e( 'Online payment is coming soon. For now, payments are recorded by Tangnest directly.', 'tangnest-robotics' ); ?></p>
+			<?php if ( ! TR_IremboPay_Settings::is_enabled() ) : ?>
+				<p class="tr-dashboard__footer"><?php esc_html_e( 'Online payment is coming soon. For now, payments are recorded by Tangnest directly.', 'tangnest-robotics' ); ?></p>
+			<?php endif; ?>
 
 		<?php endif; ?>
 

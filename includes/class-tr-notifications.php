@@ -181,8 +181,9 @@ class TR_Notifications {
 
 		$dashboard_url = TR_Parent_Dashboard::get_url();
 		$students      = self::decode_invoice_snapshot( $invoice );
+		$access_url    = TR_Access_Tokens::get_reusable_url_only( $family_id );
 
-		$body = self::render_invoice_issued_template( $user, $invoice, $students, $dashboard_url );
+		$body = self::render_invoice_issued_template( $user, $invoice, $students, $dashboard_url, $access_url );
 
 		return self::send(
 			$user->user_email,
@@ -218,13 +219,14 @@ class TR_Notifications {
 
 		$dashboard_url = TR_Parent_Dashboard::get_url();
 		$students      = self::decode_invoice_snapshot( $invoice );
+		$access_url    = TR_Access_Tokens::get_reusable_url_only( (int) $family->id );
 
 		$days_overdue = 0;
 		if ( 'overdue' === $invoice->status ) {
 			$days_overdue = max( 0, (int) floor( ( current_time( 'timestamp' ) - strtotime( $invoice->due_date ) ) / DAY_IN_SECONDS ) );
 		}
 
-		$body = self::render_reminder_template( $user, $invoice, $students, $dashboard_url, $days_overdue );
+		$body = self::render_reminder_template( $user, $invoice, $students, $dashboard_url, $days_overdue, $access_url );
 
 		return self::send(
 			$user->user_email,
@@ -247,15 +249,60 @@ class TR_Notifications {
 		return is_array( $decoded ) ? $decoded : [];
 	}
 
-	private static function render_invoice_issued_template( WP_User $user, object $invoice, array $students, string $dashboard_url ): string {
+	private static function render_invoice_issued_template( WP_User $user, object $invoice, array $students, string $dashboard_url, string $access_url ): string {
 		ob_start();
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/invoice-issued.php';
 		return ob_get_clean();
 	}
 
-	private static function render_reminder_template( WP_User $user, object $invoice, array $students, string $dashboard_url, int $days_overdue ): string {
+	private static function render_reminder_template( WP_User $user, object $invoice, array $students, string $dashboard_url, int $days_overdue, string $access_url ): string {
 		ob_start();
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/reminder.php';
+		return ob_get_clean();
+	}
+
+	/**
+	 * Sent by TR_Webhook once an IremboPay payment is confirmed PAID.
+	 */
+	public static function send_receipt_email( int $invoice_id ): bool {
+		$invoice = TR_Invoices::get( $invoice_id );
+		if ( null === $invoice ) {
+			return false;
+		}
+
+		$family = TR_Families::get( (int) $invoice->family_id );
+		if ( null === $family ) {
+			return false;
+		}
+
+		$user = get_userdata( (int) $family->parent_user_id );
+		if ( ! $user || ! is_email( $user->user_email ) ) {
+			TR_Logger::warning( 'Receipt not sent: no valid email on file', [
+				'invoice_id' => $invoice_id,
+				'family_id'  => $family->id,
+			] );
+			return false;
+		}
+
+		$dashboard_url = TR_Parent_Dashboard::get_url();
+		$students      = self::decode_invoice_snapshot( $invoice );
+
+		$body = self::render_receipt_template( $user, $invoice, $students, $dashboard_url );
+
+		return self::send(
+			$user->user_email,
+			sprintf(
+				/* translators: %s: billing period, e.g. 2026-09 */
+				__( 'Receipt — Tangnest Robotics payment for %s', 'tangnest-robotics' ),
+				$invoice->period
+			),
+			$body
+		);
+	}
+
+	private static function render_receipt_template( WP_User $user, object $invoice, array $students, string $dashboard_url ): string {
+		ob_start();
+		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/receipt.php';
 		return ob_get_clean();
 	}
 

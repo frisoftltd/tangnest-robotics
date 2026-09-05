@@ -292,10 +292,32 @@ class TR_Invoices_Table extends WP_List_Table {
 			case 'paid_at':
 				return $item->paid_at ? esc_html( substr( $item->paid_at, 0, 10 ) ) : '&#8212;';
 			case 'payment_method':
-				return $item->payment_method ? esc_html( ucfirst( str_replace( '_', ' ', $item->payment_method ) ) ) : '&#8212;';
+				return $this->format_payment_method( $item );
 			default:
 				return '';
 		}
+	}
+
+	/**
+	 * "irembopay" is stored as the payment_method value (see
+	 * TR_Payment::mark_paid_and_advance()) but must render with its proper
+	 * brand capitalisation, not the generic ucfirst(str_replace()) used for
+	 * cash/bank/mobile_money — "Irembopay" reads as a typo, not a brand.
+	 */
+	private function format_payment_method( object $item ): string {
+		if ( 'irembopay' === $item->payment_method ) {
+			$label = esc_html__( 'IremboPay', 'tangnest-robotics' );
+			if ( ! empty( $item->payment_reference ) ) {
+				$label .= '<br><span class="tr-invoice-meta">' . esc_html( $item->payment_reference ) . '</span>';
+			}
+			return $label;
+		}
+
+		if ( ! empty( $item->irembopay_invoice_number ) ) {
+			return '&#8212;<br><span class="tr-invoice-meta">' . esc_html( $item->irembopay_invoice_number ) . '</span>';
+		}
+
+		return $item->payment_method ? esc_html( ucfirst( str_replace( '_', ' ', $item->payment_method ) ) ) : '&#8212;';
 	}
 
 	public function column_status( $item ): string {

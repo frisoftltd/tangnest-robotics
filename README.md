@@ -17,6 +17,14 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.5.0
+- New: Parents can pay their invoice online with IremboPay, from their dashboard or straight from an email — the invoice marks itself paid automatically, no admin touch required
+- New: IremboPay settings under Robotics → Settings (keys, payment account, expiry, webhook secret, master on/off toggle)
+- New: Webhook endpoint reconciles payment status with idempotent handling — a retried delivery never double-counts a payment
+- New: "Check payment status" row action on the Invoices screen as a manual fallback if a webhook is ever missed
+- New: Invoices screen shows the IremboPay invoice number and transaction ID for online payments
+- Manual recording (cash, bank, mobile money) is unchanged — this adds a payment route, it does not replace one
+
 ### v0.4.1
 - Fix: Invoice summary totals now reflect the filtered view correctly
 - Fix: Invoice rows were missing their actions

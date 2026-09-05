@@ -143,6 +143,35 @@ class TR_Access_Tokens {
 	}
 
 	/**
+	 * Reuse-only lookup for automatic emails (invoice-issued, reminder) that
+	 * must NEVER mint a token — unlike get_or_generate_url(), this returns
+	 * '' instead of falling back to generate() when the current token isn't
+	 * reusable or its raw value isn't (or is no longer) cached. In practice
+	 * the cache TTL is capped to the grace window, so a scheduled reminder
+	 * firing hours or days after the link was last sent will usually find
+	 * nothing cached and correctly return '' — callers must fall back to
+	 * the plain dashboard URL in that case.
+	 */
+	public static function get_reusable_url_only( int $family_id ): string {
+		$family = TR_Families::get( $family_id );
+
+		if ( ! $family || ! self::is_reusable( $family ) ) {
+			return '';
+		}
+
+		$cached_token = get_transient( self::raw_token_cache_key( $family_id ) );
+		if ( ! is_string( $cached_token ) || '' === $cached_token ) {
+			return '';
+		}
+
+		if ( hash( 'sha256', $cached_token ) !== $family->access_token_hash ) {
+			return '';
+		}
+
+		return self::build_url( $cached_token );
+	}
+
+	/**
 	 * Always mints a fresh token regardless of reusability — the explicit
 	 * "Regenerate link" admin action, and the escape hatch for a lost
 	 * phone or cleared browser.

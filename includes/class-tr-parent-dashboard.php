@@ -60,9 +60,34 @@ class TR_Parent_Dashboard {
 
 		$this->maybe_cleanup_stale_windows();
 
+		// ?tr_pay={id} is only ever used to look up a candidate invoice —
+		// TR_Payment::initiate() independently verifies it belongs to the
+		// CURRENT session's family before anything renders. Logged-out
+		// visitors fall through to the normal dashboard (its own login
+		// form), never to the payment template.
+		$payment_invoice_id = isset( $_GET['tr_pay'] ) ? absint( $_GET['tr_pay'] ) : 0;
+
 		ob_start();
-		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/parent-dashboard.php';
+
+		if ( $payment_invoice_id > 0 && is_user_logged_in() ) {
+			$payment_result = TR_Payment::initiate( $payment_invoice_id );
+			include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/payment-page.php';
+		} else {
+			include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/parent-dashboard.php';
+		}
+
 		return ob_get_clean();
+	}
+
+	/**
+	 * Purely cosmetic — carries no ID or data, grants no access. The
+	 * webhook (or the reuse-check's defensive reconciliation) is the only
+	 * source of truth for whether an invoice is actually paid; this just
+	 * lets the dashboard show a friendly banner after IremboPay's
+	 * onSuccess callback redirects back.
+	 */
+	public static function just_paid(): bool {
+		return isset( $_GET['tr_paid'] );
 	}
 
 	/**

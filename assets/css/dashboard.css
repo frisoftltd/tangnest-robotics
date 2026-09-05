@@ -264,3 +264,104 @@
 		gap: 16px;
 	}
 }
+
+.tr-payment-button {
+	display: inline-block;
+	margin-top: 12px;
+	padding: 12px 28px;
+	background: #12c4c4;
+	color: #ffffff;
+	font-weight: 700;
+	font-size: 1rem;
+	text-decoration: none;
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	text-align: center;
+}
+
+.tr-payment-button:hover,
+.tr-payment-button:focus {
+	background: #0fa8a8;
+	color: #ffffff;
+}
+
+.tr-payment-button--dashboard {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.tr-payment-button--small {
+	margin: 0;
+	padding: 4px 12px;
+	font-size: 0.8rem;
+	border-radius: 999px;
+}
+
+.tr-dashboard__invoice-row {
+	flex-wrap: wrap;
+	row-gap: 8px;
+}
+
+.tr-payment-page .tr-payment-card {
+	background: #ffffff;
+	border: 1px solid #e2e5eb;
+	border-radius: 12px;
+	padding: 24px;
+	text-align: center;
+}
+
+.tr-payment-card h2 {
+	margin: 0 0 12px;
+	font-size: 1.2rem;
+	color: #1a2535;
+}
+
+.tr-payment-amount {
+	margin: 0 0 4px;
+	font-size: 1.8rem;
+	font-weight: 700;
+	color: #1a2535;
+}
+
+.tr-payment-period {
+	margin: 0 0 16px;
+	color: #4a5568;
+	font-size: 0.9rem;
+}
+
+.tr-payment-back {
+	margin-top: 16px;
+	font-size: 0.85rem;
+}
+
+.tr-payment-spinner {
+	display: inline-block;
+	width: 32px;
+	height: 32px;
+	border: 3px solid #e2e5eb;
+	border-top-color: #12c4c4;
+	border-radius: 50%;
+	animation: tr-payment-spin 0.8s linear infinite;
+	margin-bottom: 12px;
+}
+
+@keyframes tr-payment-spin {
+	to { transform: rotate(360deg); }
+}
+
+#tr-payment-status {
+	color: #4a5568;
+	font-size: 0.9rem;
+	margin: 0 0 16px;
+}
+
+.tr-payment-error {
+	color: #b3261e;
+	background: #fdeaea;
+	border: 1px solid #f6c9c4;
+	border-radius: 8px;
+	padding: 10px 14px;
+	margin-top: 12px;
+	font-size: 0.9rem;
+}

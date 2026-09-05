@@ -4,13 +4,19 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * Payment reminder email body. Included by
  * TR_Notifications::render_reminder_template() with $user (WP_User),
  * $invoice (object: period, amount, currency, due_date, status),
- * $students (array, same shape as invoice-issued.php), $dashboard_url and
- * $days_overdue (int, 0 unless the invoice is actually overdue) already in
- * scope. Same inline-CSS, table-safe, max-width 600px layout as welcome.php.
+ * $students (array, same shape as invoice-issued.php), $dashboard_url,
+ * $days_overdue (int, 0 unless the invoice is actually overdue) and
+ * $access_url already in scope. Same inline-CSS, table-safe, max-width 600px
+ * layout as welcome.php.
+ *
+ * $access_url is '' unless the family's current passwordless link is still
+ * reusable — it is never minted here (see TR_Access_Tokens::get_reusable_url_only()).
+ * The schedule link below falls back to the plain $dashboard_url when empty.
  */
-$first_name = $user->first_name ? $user->first_name : $user->display_name;
-$due_date   = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_date ) );
-$is_overdue = $days_overdue > 0;
+$first_name    = $user->first_name ? $user->first_name : $user->display_name;
+$due_date      = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_date ) );
+$is_overdue    = $days_overdue > 0;
+$schedule_link = '' !== $access_url ? $access_url : $dashboard_url;
 ?>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:24px 0;">
 	<tr>
@@ -86,16 +92,24 @@ $is_overdue = $days_overdue > 0;
 							<?php esc_html_e( 'If you have already paid, please let Tangnest know so we can update your record — sorry for the reminder in that case.', 'tangnest-robotics' ); ?>
 						</p>
 
-						<?php if ( ! empty( $dashboard_url ) ) : ?>
+						<?php if ( TR_IremboPay_Settings::is_enabled() ) : ?>
 							<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0;">
 								<tr>
 									<td style="border-radius:6px;background:#12c4c4;">
-										<a href="<?php echo esc_url( $dashboard_url ); ?>" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">
-											<?php esc_html_e( 'View your payment schedule', 'tangnest-robotics' ); ?>
+										<a href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $invoice->id ) ); ?>" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">
+											<?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?>
 										</a>
 									</td>
 								</tr>
 							</table>
+						<?php endif; ?>
+
+						<?php if ( ! empty( $schedule_link ) ) : ?>
+							<p style="margin:16px 0 0;">
+								<a href="<?php echo esc_url( $schedule_link ); ?>" style="font-size:14px;color:#12c4c4;text-decoration:underline;">
+									<?php esc_html_e( 'View your payment schedule', 'tangnest-robotics' ); ?>
+								</a>
+							</p>
 						<?php endif; ?>
 					</td>
 				</tr>

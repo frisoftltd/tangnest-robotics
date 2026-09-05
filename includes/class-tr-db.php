@@ -162,6 +162,7 @@ class TR_DB {
 			student_snapshot          TEXT         DEFAULT NULL,
 			irembopay_invoice_number  VARCHAR(120) DEFAULT NULL,
 			irembopay_transaction_id  VARCHAR(120) DEFAULT NULL,
+			irembopay_expires_at      DATETIME     DEFAULT NULL,
 			last_reminder_sent        DATETIME     DEFAULT NULL,
 			reminder_count            TINYINT(3)   UNSIGNED NOT NULL DEFAULT 0,
 			reminder_stages_sent      VARCHAR(100) DEFAULT NULL,

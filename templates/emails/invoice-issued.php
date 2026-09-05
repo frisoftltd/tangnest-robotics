@@ -4,13 +4,18 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * "Invoice issued" email body. Included by
  * TR_Notifications::render_invoice_issued_template() with $user (WP_User),
  * $invoice (object: period, amount, currency, due_date), $students (array
- * of ['student_name'=>, 'program_name'=>, 'month_number'=>, 'months_total'=>])
- * and $dashboard_url already in scope.
+ * of ['student_name'=>, 'program_name'=>, 'month_number'=>, 'months_total'=>]),
+ * $dashboard_url and $access_url already in scope.
+ *
+ * $access_url is '' unless the family's current passwordless link is still
+ * reusable — it is never minted here (see TR_Access_Tokens::get_reusable_url_only()).
+ * The schedule link below falls back to the plain $dashboard_url when empty.
  *
  * Same inline-CSS, table-safe, max-width 600px layout as welcome.php.
  */
-$first_name = $user->first_name ? $user->first_name : $user->display_name;
-$due_date   = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_date ) );
+$first_name    = $user->first_name ? $user->first_name : $user->display_name;
+$due_date      = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_date ) );
+$schedule_link = '' !== $access_url ? $access_url : $dashboard_url;
 ?>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:24px 0;">
 	<tr>
@@ -83,20 +88,32 @@ $due_date   = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_d
 							</ul>
 						<?php endif; ?>
 
-						<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
-							<?php esc_html_e( 'Payment is currently recorded by Tangnest directly — cash, bank transfer or mobile money. Just let us know once you\'ve paid so we can mark it.', 'tangnest-robotics' ); ?>
-						</p>
+						<?php if ( TR_IremboPay_Settings::is_enabled() ) : ?>
+							<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
+								<?php esc_html_e( 'You can pay online right now with IremboPay, or keep paying cash, bank transfer or mobile money as usual — just let us know once you\'ve paid so we can mark it.', 'tangnest-robotics' ); ?>
+							</p>
 
-						<?php if ( ! empty( $dashboard_url ) ) : ?>
 							<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0;">
 								<tr>
 									<td style="border-radius:6px;background:#12c4c4;">
-										<a href="<?php echo esc_url( $dashboard_url ); ?>" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">
-											<?php esc_html_e( 'View your payment schedule', 'tangnest-robotics' ); ?>
+										<a href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $invoice->id ) ); ?>" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">
+											<?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?>
 										</a>
 									</td>
 								</tr>
 							</table>
+						<?php else : ?>
+							<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
+								<?php esc_html_e( 'Payment is currently recorded by Tangnest directly — cash, bank transfer or mobile money. Just let us know once you\'ve paid so we can mark it.', 'tangnest-robotics' ); ?>
+							</p>
+						<?php endif; ?>
+
+						<?php if ( ! empty( $schedule_link ) ) : ?>
+							<p style="margin:16px 0 0;">
+								<a href="<?php echo esc_url( $schedule_link ); ?>" style="font-size:14px;color:#12c4c4;text-decoration:underline;">
+									<?php esc_html_e( 'View your payment schedule', 'tangnest-robotics' ); ?>
+								</a>
+							</p>
 						<?php endif; ?>
 					</td>
 				</tr>
