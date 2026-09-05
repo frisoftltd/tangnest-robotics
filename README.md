@@ -17,6 +17,11 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.5.1
+- Fix: the v0.3.6 diagnostic debug logging fired on every front-end page load site-wide (not just the dashboard), even with no access token present — now only logs when a token is actually in the request
+- New: "Debug logging" toggle in Robotics → Settings, off by default — gates only debug-level log lines; info, warning and error lines always write
+- New: daily log rotation deletes log files older than 30 days
+
 ### v0.5.0
 - New: Parents can pay their invoice online with IremboPay, from their dashboard or straight from an email — the invoice marks itself paid automatically, no admin touch required
 - New: IremboPay settings under Robotics → Settings (keys, payment account, expiry, webhook secret, master on/off toggle)

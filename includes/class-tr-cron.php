@@ -32,5 +32,6 @@ class TR_Cron {
 	public static function run(): void {
 		TR_Invoice_Generator::run();
 		TR_Reminder_Scheduler::run();
+		TR_Logger::rotate();
 	}
 }

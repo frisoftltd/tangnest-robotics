@@ -138,13 +138,15 @@ class TR_Parent_Dashboard {
 	 * which shows the login form since a bot is never logged in.
 	 */
 	public function maybe_handle_access_token(): void {
-		TR_Logger::debug( 'maybe_handle_access_token entered', [
-			'tr_access_present' => isset( $_GET['tr_access'] ),
-		] );
-
+		// This hooks into template_redirect, which fires on every front-end
+		// request site-wide — a visit with no token in the URL is not an
+		// event worth a log line, or this would write thousands of them a
+		// day once parents are actually using the dashboard.
 		if ( ! isset( $_GET['tr_access'] ) ) {
 			return;
 		}
+
+		TR_Logger::debug( 'maybe_handle_access_token entered', [ 'tr_access_present' => true ] );
 
 		$page_id = (int) get_option( self::OPTION_PAGE_ID, 0 );
 		if ( $page_id <= 0 || ! is_page( $page_id ) ) {

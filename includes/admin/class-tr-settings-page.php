@@ -43,6 +43,7 @@ class TR_Settings_Page {
 
 		$page_id = isset( $_POST['dashboard_page_id'] ) ? absint( $_POST['dashboard_page_id'] ) : 0;
 		update_option( TR_Parent_Dashboard::OPTION_PAGE_ID, $page_id );
+		update_option( TR_Logger::DEBUG_OPTION, ! empty( $_POST['debug_logging'] ) );
 
 		wp_safe_redirect( add_query_arg( [ 'page' => self::PAGE, 'updated' => 1 ], admin_url( 'admin.php' ) ) );
 		exit;
@@ -179,6 +180,16 @@ class TR_Settings_Page {
 							] );
 							?>
 							<p class="description"><?php esc_html_e( 'The page containing the [tangnest_parent_dashboard] shortcode.', 'tangnest-robotics' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Debug logging', 'tangnest-robotics' ); ?></th>
+						<td>
+							<label>
+								<input type="checkbox" name="debug_logging" value="1" <?php checked( TR_Logger::debug_enabled() ); ?>>
+								<?php esc_html_e( 'Write verbose debug lines to the plugin log', 'tangnest-robotics' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'Off by default. Info, warning and error lines are always written regardless of this setting — this only controls the high-volume debug ones. Turn on temporarily while diagnosing an issue, then off again.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 				</table>
