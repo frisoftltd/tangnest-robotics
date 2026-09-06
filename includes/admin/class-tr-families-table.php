@@ -140,7 +140,7 @@ class TR_Families_Table extends WP_List_Table {
 			case 'active_students':
 				return esc_html( (string) $item->active_students );
 			case 'monthly_amount':
-				return esc_html( $item->monthly_amount ) . ' RWF';
+				return esc_html( $item->monthly_amount ) . ' RWF' . ( ! empty( $item->amount_is_custom ) ? ' <span class="tr-invoice-meta">(' . esc_html__( 'custom', 'tangnest-robotics' ) . ')</span>' : '' );
 			case 'billing_day':
 				return (int) $item->billing_day > 0 ? esc_html( (string) (int) $item->billing_day ) : esc_html__( 'Not set', 'tangnest-robotics' );
 			case 'next_billing':

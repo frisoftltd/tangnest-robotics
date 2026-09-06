@@ -22,11 +22,12 @@ class TR_Families {
 		$now = current_time( 'mysql' );
 
 		$sql = $wpdb->prepare(
-			"INSERT INTO " . self::table() . " (parent_user_id, monthly_amount, currency, billing_day, status, notes, created_at, updated_at)
-			 VALUES (%d, %s, %s, %d, %s, %s, %s, %s)",
+			"INSERT INTO " . self::table() . " (parent_user_id, monthly_amount, amount_is_custom, currency, billing_day, status, notes, created_at, updated_at)
+			 VALUES (%d, %s, %d, %s, %d, %s, %s, %s, %s)",
 			[
 				absint( $data['parent_user_id'] ),
 				number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
+				! empty( $data['amount_is_custom'] ) ? 1 : 0,
 				$data['currency'] ?? 'RWF',
 				absint( $data['billing_day'] ?? 0 ),
 				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
@@ -45,9 +46,10 @@ class TR_Families {
 		$now = current_time( 'mysql' );
 
 		$sql = $wpdb->prepare(
-			"UPDATE " . self::table() . " SET monthly_amount = %s, currency = %s, billing_day = %d, status = %s, notes = %s, updated_at = %s WHERE id = %d",
+			"UPDATE " . self::table() . " SET monthly_amount = %s, amount_is_custom = %d, currency = %s, billing_day = %d, status = %s, notes = %s, updated_at = %s WHERE id = %d",
 			[
 				number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
+				! empty( $data['amount_is_custom'] ) ? 1 : 0,
 				$data['currency'] ?? 'RWF',
 				absint( $data['billing_day'] ?? 0 ),
 				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
@@ -58,6 +60,49 @@ class TR_Families {
 		);
 
 		return false !== $wpdb->query( $sql );
+	}
+
+	/**
+	 * The sum of every active enrollment's program fee — what a family's
+	 * amount would be if it were not a custom bundle. Never touches the
+	 * database; callers decide what to do with the number.
+	 */
+	public static function calculate_amount( int $family_id ): float {
+		$enrollments = TR_Enrollments::get_active_by_family( $family_id );
+
+		$total = 0.0;
+		foreach ( $enrollments as $enrollment ) {
+			$program = TR_Programs::get( (int) $enrollment->program_id );
+			if ( $program ) {
+				$total += (float) $program->default_monthly_fee;
+			}
+		}
+
+		return $total;
+	}
+
+	/**
+	 * Recomputes and stores monthly_amount from current active enrollments.
+	 * No-ops when the family's bundle override is in use — the entire point
+	 * of the override is that a recalculation must never silently replace a
+	 * hand-entered total. Never touches invoices that already exist; only
+	 * the family row itself.
+	 */
+	public static function recalculate_amount( int $family_id ): void {
+		global $wpdb;
+
+		$family = self::get( $family_id );
+		if ( null === $family || ! empty( $family->amount_is_custom ) ) {
+			return;
+		}
+
+		$total = self::calculate_amount( $family_id );
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET monthly_amount = %s, updated_at = %s WHERE id = %d",
+			[ number_format( $total, 2, '.', '' ), current_time( 'mysql' ), $family_id ]
+		);
+		$wpdb->query( $sql );
 	}
 
 	public static function get( int $id ): ?object {

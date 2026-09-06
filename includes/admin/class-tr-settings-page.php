@@ -163,6 +163,12 @@ class TR_Settings_Page {
 				<div class="notice notice-error"><ul><?php foreach ( $irembopay_errors as $error ) : ?><li><?php echo esc_html( $error ); ?></li><?php endforeach; ?></ul></div>
 			<?php endif; ?>
 
+			<?php if ( ! empty( $irembopay['enabled'] ) && '' === $irembopay['default_product_code'] && TR_Programs::has_active_without_product_code() ) : ?>
+				<div class="notice notice-warning">
+					<p><?php esc_html_e( 'Online payments are enabled, there is no default product code set, and at least one active program has no product code of its own. Parents on those programs will see "Could not start the payment" when they try to pay. Set a default below, or a code on each program.', 'tangnest-robotics' ); ?></p>
+				</div>
+			<?php endif; ?>
+
 			<form method="post">
 				<?php wp_nonce_field( self::NONCE, 'tr_settings_nonce' ); ?>
 				<table class="form-table" role="presentation">

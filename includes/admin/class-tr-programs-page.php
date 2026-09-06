@@ -33,7 +33,12 @@ class TR_Programs_Page {
 
 		$default_fee = isset( $_POST['default_monthly_fee'] ) ? (float) wp_unslash( $_POST['default_monthly_fee'] ) : 0.0;
 		if ( $default_fee < 0 ) {
-			$errors[] = __( 'Default monthly fee cannot be negative.', 'tangnest-robotics' );
+			$errors[] = __( 'Monthly fee cannot be negative.', 'tangnest-robotics' );
+		}
+
+		$status = isset( $_POST['status'] ) && in_array( $_POST['status'], TR_Programs::STATUSES, true ) ? $_POST['status'] : 'active';
+		if ( 'active' === $status && $default_fee <= 0 ) {
+			$errors[] = __( 'Monthly fee is required for an active program — this is what families are billed.', 'tangnest-robotics' );
 		}
 
 		$product_code = isset( $_POST['irembopay_product_code'] ) ? sanitize_text_field( wp_unslash( $_POST['irembopay_product_code'] ) ) : '';
@@ -52,8 +57,7 @@ class TR_Programs_Page {
 			}
 		}
 
-		$status = isset( $_POST['status'] ) && in_array( $_POST['status'], TR_Programs::STATUSES, true ) ? $_POST['status'] : 'active';
-		$id     = isset( $_POST['program_id'] ) ? absint( $_POST['program_id'] ) : 0;
+		$id = isset( $_POST['program_id'] ) ? absint( $_POST['program_id'] ) : 0;
 
 		if ( ! empty( $errors ) ) {
 			set_transient( 'tr_program_form_errors_' . get_current_user_id(), $errors, MINUTE_IN_SECONDS );
@@ -128,10 +132,10 @@ class TR_Programs_Page {
 						<td><input type="number" id="tr-duration" name="duration_months" min="1" max="36" required value="<?php echo esc_attr( $program->duration_months ?? 8 ); ?>"></td>
 					</tr>
 					<tr>
-						<th><label for="tr-fee"><?php esc_html_e( 'Default monthly fee', 'tangnest-robotics' ); ?></label></th>
+						<th><label for="tr-fee"><?php esc_html_e( 'Monthly fee (RWF)', 'tangnest-robotics' ); ?></label></th>
 						<td>
 							<input type="number" id="tr-fee" name="default_monthly_fee" step="0.01" min="0" value="<?php echo esc_attr( $program->default_monthly_fee ?? '0.00' ); ?>">
-							<p class="description"><?php esc_html_e( 'Convenience figure only. Families are billed their own monthly amount, never this fee.', 'tangnest-robotics' ); ?></p>
+							<p class="description"><?php esc_html_e( 'The real price — this is what a family is billed for each child enrolled in this program. Required for an active program.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -175,7 +179,7 @@ class TR_Programs_Page {
 				<tr>
 					<th><?php esc_html_e( 'Name', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Duration', 'tangnest-robotics' ); ?></th>
-					<th><?php esc_html_e( 'Default Fee', 'tangnest-robotics' ); ?></th>
+					<th><?php esc_html_e( 'Monthly Fee', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Product Code', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Start Date', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Status', 'tangnest-robotics' ); ?></th>
@@ -187,11 +191,17 @@ class TR_Programs_Page {
 					<tr><td colspan="7"><?php esc_html_e( 'No programs yet.', 'tangnest-robotics' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $programs as $program ) : ?>
+						<?php $missing_code = 'active' === $program->status && empty( $program->irembopay_product_code ); ?>
 						<tr>
 							<td><?php echo esc_html( $program->name ); ?></td>
 							<td><?php echo esc_html( $program->duration_months ); ?></td>
 							<td><?php echo esc_html( $program->default_monthly_fee ); ?></td>
-							<td><?php echo esc_html( $program->irembopay_product_code ?? '' ); ?></td>
+							<td>
+								<?php echo esc_html( $program->irembopay_product_code ?? '' ); ?>
+								<?php if ( $missing_code ) : ?>
+									<br><span class="tr-warning-flag"><?php esc_html_e( '⚠ No product code — online payment will not work for this program.', 'tangnest-robotics' ); ?></span>
+								<?php endif; ?>
+							</td>
 							<td><?php echo esc_html( $program->start_date ?? '' ); ?></td>
 							<td><?php echo esc_html( ucfirst( $program->status ) ); ?></td>
 							<td><a href="<?php echo esc_url( self::edit_url( (int) $program->id ) ); ?>"><?php esc_html_e( 'Edit', 'tangnest-robotics' ); ?></a></td>

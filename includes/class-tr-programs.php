@@ -2,9 +2,10 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
- * Thin $wpdb wrapper over wp_tr_programs. default_monthly_fee is a
- * convenience figure only — families are billed their own monthly_amount,
- * never the program fee.
+ * Thin $wpdb wrapper over wp_tr_programs. default_monthly_fee is the real
+ * price (v0.6.0) — a family's monthly_amount is the sum of its active
+ * children's program fees, calculated by TR_Families::calculate_amount(),
+ * unless the family has a bundle override in place.
  */
 class TR_Programs {
 	const STATUSES = [ 'active', 'inactive' ];
@@ -118,5 +119,21 @@ class TR_Programs {
 		}
 
 		return [ implode( ' AND ', $where ), $params ];
+	}
+
+	/**
+	 * Used to warn on both the Programs screen (per row) and the Settings
+	 * screen (a single summary notice) — an active program with no code of
+	 * its own can only take online payments if the global default is set.
+	 */
+	public static function has_active_without_product_code(): bool {
+		global $wpdb;
+
+		$count = $wpdb->get_var( $wpdb->prepare(
+			"SELECT COUNT(*) FROM " . self::table() . " WHERE status = %s AND (irembopay_product_code IS NULL OR irembopay_product_code = '')",
+			[ 'active' ]
+		) );
+
+		return (int) $count > 0;
 	}
 }

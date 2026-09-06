@@ -17,6 +17,14 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.6.0
+- Changed: Monthly fees are now set on the program, not per family
+- New: Family amounts calculate automatically from enrolled children
+- New: Bundle override for families with a negotiated total
+- New: Add several children to a family in one screen
+- New: Warnings when a program has no IremboPay product code
+- Fix: Removed the confusing amount field from the student form
+
 ### v0.5.1
 - Fix: the v0.3.6 diagnostic debug logging fired on every front-end page load site-wide (not just the dashboard), even with no access token present — now only logs when a token is actually in the request
 - New: "Debug logging" toggle in Robotics → Settings, off by default — gates only debug-level log lines; info, warning and error lines always write

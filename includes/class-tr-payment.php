@@ -111,15 +111,27 @@ class TR_Payment {
 		$expiry_dt   = ( new DateTime( 'now', wp_timezone() ) )->modify( '+' . TR_IremboPay_Settings::expiry_hours() . ' hours' );
 		$expiry_atom = $expiry_dt->format( DateTime::ATOM );
 
+		$product_code = self::product_code_for_invoice( $invoice );
+
+		// Caught here, not by IremboPay's BAD_PRODUCT rejection — the
+		// dashboard and emails are also supposed to hide the Pay button in
+		// this exact situation (see has_resolvable_product_code()), so
+		// reaching this point at all means that guard was bypassed or a
+		// program was edited after the button was rendered.
+		if ( '' === $product_code ) {
+			TR_Logger::error( 'Cannot start IremboPay payment: no product code resolves for this invoice', [
+				'invoice_id'      => $invoice->id,
+				'family_id'       => $family->id,
+				'programs_no_code' => self::program_names_missing_code( $invoice ),
+			] );
+			return self::error( __( 'Online payment is not set up for this program yet. Please contact Tangnest.', 'tangnest-robotics' ) );
+		}
+
 		$payment_item = [
 			'unitAmount' => (int) round( (float) $invoice->amount ), // RWF has no minor units — must be an integer, never a float.
 			'quantity'   => 1,
+			'code'       => $product_code,
 		];
-
-		$product_code = self::product_code_for_invoice( $invoice );
-		if ( '' !== $product_code ) {
-			$payment_item['code'] = $product_code;
-		}
 
 		$payload = [
 			'transactionId'            => $transaction_id,
@@ -170,7 +182,17 @@ class TR_Payment {
 		return [ 'success' => true, 'invoice' => $invoice, 'irembopay_invoice_number' => $irembopay_invoice_number, 'error' => '' ];
 	}
 
-	private static function product_code_for_invoice( object $invoice ): string {
+	/**
+	 * True when a Pay attempt on this invoice would actually have a product
+	 * code to send IremboPay — the dashboard and email templates use this
+	 * to hide the Pay button and show a plain "contact us" line instead,
+	 * rather than let a parent hit "Could not start the payment".
+	 */
+	public static function has_resolvable_product_code( object $invoice ): bool {
+		return '' !== self::product_code_for_invoice( $invoice );
+	}
+
+	public static function product_code_for_invoice( object $invoice ): string {
 		$enrollments = TR_Enrollments::get_active_by_family( (int) $invoice->family_id );
 
 		foreach ( $enrollments as $enrollment ) {
@@ -181,6 +203,20 @@ class TR_Payment {
 		}
 
 		return TR_IremboPay_Settings::default_product_code();
+	}
+
+	private static function program_names_missing_code( object $invoice ): array {
+		$enrollments = TR_Enrollments::get_active_by_family( (int) $invoice->family_id );
+
+		$names = [];
+		foreach ( $enrollments as $enrollment ) {
+			$program = TR_Programs::get( (int) $enrollment->program_id );
+			if ( $program && empty( $program->irembopay_product_code ) ) {
+				$names[] = $program->name;
+			}
+		}
+
+		return $names;
 	}
 
 	private static function student_names_for_invoice( object $invoice ): array {

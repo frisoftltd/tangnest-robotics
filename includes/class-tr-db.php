@@ -32,11 +32,38 @@ class TR_DB {
 	public static function maybe_upgrade(): void {
 		self::cleanup_legacy_access_token_cache();
 
-		if ( get_option( self::DB_VERSION_OPTION ) === TANGNEST_ROBOTICS_DB_VERSION ) {
+		$previous_version = get_option( self::DB_VERSION_OPTION );
+		if ( $previous_version === TANGNEST_ROBOTICS_DB_VERSION ) {
 			return;
 		}
+
 		self::create_tables();
+
+		// A brand new install has no rows to protect — only run this against
+		// a site that already had families before amount_is_custom existed.
+		if ( $previous_version && version_compare( $previous_version, '0.6.0', '<' ) ) {
+			self::migrate_existing_family_amounts_to_custom();
+		}
+
 		update_option( self::DB_VERSION_OPTION, TANGNEST_ROBOTICS_DB_VERSION );
+	}
+
+	/**
+	 * v0.6.0 makes monthly_amount a calculated figure by default. Every
+	 * family that existed before this ran had its amount hand-typed under
+	 * the old model — those figures must not be silently overwritten by a
+	 * calculation the admin never asked for, so they're all marked custom.
+	 * Runs once, as part of the version-gated upgrade above.
+	 */
+	private static function migrate_existing_family_amounts_to_custom(): void {
+		global $wpdb;
+		$families_table = self::table_families();
+
+		$updated = $wpdb->query( "UPDATE {$families_table} SET amount_is_custom = 1 WHERE amount_is_custom = 0" );
+
+		TR_Logger::info( 'v0.6.0 migration: existing family amounts marked as custom', [
+			'rows_updated' => false !== $updated ? (int) $updated : 0,
+		] );
 	}
 
 	/**
@@ -77,6 +104,7 @@ class TR_DB {
 			id                       BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
 			parent_user_id           BIGINT(20) UNSIGNED NOT NULL,
 			monthly_amount           DECIMAL(12,2) NOT NULL DEFAULT '0.00',
+			amount_is_custom         TINYINT(1)   NOT NULL DEFAULT 0,
 			currency                 VARCHAR(10)  NOT NULL DEFAULT 'RWF',
 			billing_day              TINYINT(3)   UNSIGNED NOT NULL DEFAULT 1,
 			status                   VARCHAR(20)  NOT NULL DEFAULT 'active',

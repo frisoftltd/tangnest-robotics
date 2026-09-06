@@ -161,7 +161,11 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 						?>
 					</p>
 					<?php if ( TR_IremboPay_Settings::is_enabled() ) : ?>
-						<a class="tr-payment-button tr-payment-button--dashboard" href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $earliest_due->id ) ); ?>"><?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?></a>
+						<?php if ( TR_Payment::has_resolvable_product_code( $earliest_due ) ) : ?>
+							<a class="tr-payment-button tr-payment-button--dashboard" href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $earliest_due->id ) ); ?>"><?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?></a>
+						<?php else : ?>
+							<p class="tr-dashboard__due-sub"><?php esc_html_e( 'Contact Tangnest to pay this month.', 'tangnest-robotics' ); ?></p>
+						<?php endif; ?>
 					<?php endif; ?>
 				</div>
 
@@ -182,7 +186,11 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 							<span class="tr-dashboard__invoice-amount"><?php echo esc_html( number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency ); ?></span>
 							<span class="tr-badge tr-badge--<?php echo esc_attr( $invoice->status ); ?>"><?php echo esc_html( ucfirst( $invoice->status ) ); ?></span>
 							<?php if ( TR_IremboPay_Settings::is_enabled() && in_array( $invoice->status, [ 'pending', 'overdue' ], true ) ) : ?>
-								<a class="tr-payment-button tr-payment-button--small" href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $invoice->id ) ); ?>"><?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?></a>
+								<?php if ( TR_Payment::has_resolvable_product_code( $invoice ) ) : ?>
+									<a class="tr-payment-button tr-payment-button--small" href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $invoice->id ) ); ?>"><?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?></a>
+								<?php else : ?>
+									<span class="tr-dashboard__invoice-meta"><?php esc_html_e( 'Contact Tangnest to pay this month.', 'tangnest-robotics' ); ?></span>
+								<?php endif; ?>
 							<?php endif; ?>
 						</div>
 					<?php endforeach; ?>

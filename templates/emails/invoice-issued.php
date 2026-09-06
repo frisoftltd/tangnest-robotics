@@ -88,7 +88,7 @@ $schedule_link = '' !== $access_url ? $access_url : $dashboard_url;
 							</ul>
 						<?php endif; ?>
 
-						<?php if ( TR_IremboPay_Settings::is_enabled() ) : ?>
+						<?php if ( TR_IremboPay_Settings::is_enabled() && TR_Payment::has_resolvable_product_code( $invoice ) ) : ?>
 							<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
 								<?php esc_html_e( 'You can pay online right now with IremboPay, or keep paying cash, bank transfer or mobile money as usual — just let us know once you\'ve paid so we can mark it.', 'tangnest-robotics' ); ?>
 							</p>

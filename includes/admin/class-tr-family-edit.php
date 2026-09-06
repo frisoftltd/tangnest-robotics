@@ -2,9 +2,12 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
- * Family add/edit form: pick-or-create parent WP user, phone/meta, monthly
- * amount, and the billing-day anchor (read-only once set unless the admin
- * explicitly checks "override anchor").
+ * Family add/edit form: pick-or-create parent WP user, phone/meta, the
+ * calculated (or bundle-override) monthly amount, the billing-day anchor
+ * (read-only once set unless the admin explicitly checks "override
+ * anchor"), and an inline repeatable Children section so several siblings
+ * can be added in one save instead of one trip through the standalone
+ * Add Student screen per child.
  */
 class TR_Family_Edit {
 	const NONCE = 'tr_family_save';
@@ -33,9 +36,10 @@ class TR_Family_Edit {
 			$errors[] = __( 'Phone must be in the format 07XXXXXXXX.', 'tangnest-robotics' );
 		}
 
-		$monthly_amount = isset( $_POST['monthly_amount'] ) ? (float) wp_unslash( $_POST['monthly_amount'] ) : -1;
-		if ( $monthly_amount < 0 ) {
-			$errors[] = __( 'Monthly amount must be zero or greater.', 'tangnest-robotics' );
+		$amount_is_custom = ! empty( $_POST['amount_is_custom'] );
+		$custom_amount    = isset( $_POST['custom_amount'] ) ? (float) wp_unslash( $_POST['custom_amount'] ) : -1;
+		if ( $amount_is_custom && $custom_amount < 0 ) {
+			$errors[] = __( 'Custom amount must be zero or greater.', 'tangnest-robotics' );
 		}
 
 		$billing_day_input = isset( $_POST['billing_day'] ) ? absint( $_POST['billing_day'] ) : 0;
@@ -46,6 +50,9 @@ class TR_Family_Edit {
 
 		$status = isset( $_POST['status'] ) && in_array( $_POST['status'], TR_Families::STATUSES, true ) ? $_POST['status'] : 'active';
 		$notes  = isset( $_POST['notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['notes'] ) ) : '';
+
+		[ $valid_children, $child_errors ] = self::parse_children_rows( $_POST['new_children'] ?? [] );
+		$errors = array_merge( $errors, $child_errors );
 
 		$user_id  = 0;
 		$new_email = $new_first = $new_last = '';
@@ -101,11 +108,14 @@ class TR_Family_Edit {
 		update_user_meta( $user_id, 'parent_email', $user->user_email );
 
 		$data = [
-			'parent_user_id' => $user_id,
-			'monthly_amount' => $monthly_amount,
-			'currency'       => 'RWF',
-			'status'         => $status,
-			'notes'          => $notes,
+			// Placeholder when calculated — recalculate_amount() below sets
+			// the real figure once this family's children are in place.
+			'monthly_amount'   => $amount_is_custom ? $custom_amount : 0,
+			'amount_is_custom' => $amount_is_custom,
+			'parent_user_id'   => $user_id,
+			'currency'         => 'RWF',
+			'status'           => $status,
+			'notes'            => $notes,
 		];
 
 		if ( $family_id > 0 ) {
@@ -121,6 +131,34 @@ class TR_Family_Edit {
 			$family_id            = TR_Families::insert( $data );
 		}
 
+		foreach ( $valid_children as $child ) {
+			$new_student_id = TR_Students::insert( [
+				'family_id'     => $family_id,
+				'first_name'    => $child['first_name'],
+				'last_name'     => $child['last_name'],
+				'date_of_birth' => $child['date_of_birth'],
+				'school'        => $child['school'],
+				'status'        => 'active',
+			] );
+
+			TR_Enrollments::insert( [
+				'student_id'   => $new_student_id,
+				'program_id'   => $child['program_id'],
+				'enrolled_on'  => $child['enrolled_on'],
+				'months_total' => (int) $child['program']->duration_months,
+				'months_paid'  => 0,
+				'status'       => 'active',
+			] );
+
+			// Idempotent — only the first child ever actually moves this
+			// from 0, regardless of how many rows are processed here.
+			TR_Families::set_billing_anchor( $family_id, $child['enrolled_on'] );
+		}
+
+		if ( ! $amount_is_custom ) {
+			TR_Families::recalculate_amount( $family_id );
+		}
+
 		TR_Families::clear_composition_flag( $family_id );
 
 		if ( 'new' === $mode ) {
@@ -134,6 +172,95 @@ class TR_Family_Edit {
 			'updated' => 1,
 		], admin_url( 'admin.php' ) ) );
 		exit;
+	}
+
+	/**
+	 * A fully blank row is just an unused template row appended by the "Add
+	 * child" button and never filled in — silently skipped, not an error.
+	 * Any row with at least a name in it is validated fully.
+	 */
+	private static function parse_children_rows( $raw_rows ): array {
+		$valid_children = [];
+		$errors         = [];
+
+		if ( ! is_array( $raw_rows ) ) {
+			return [ $valid_children, $errors ];
+		}
+
+		foreach ( wp_unslash( $raw_rows ) as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$first = isset( $row['first_name'] ) ? sanitize_text_field( $row['first_name'] ) : '';
+			$last  = isset( $row['last_name'] ) ? sanitize_text_field( $row['last_name'] ) : '';
+
+			if ( '' === $first && '' === $last ) {
+				continue;
+			}
+
+			$who = trim( $first . ' ' . $last ) ?: __( 'A new child', 'tangnest-robotics' );
+
+			if ( '' === $first || '' === $last ) {
+				$errors[] = sprintf(
+					/* translators: %s: whichever name was entered for this row */
+					__( '%s: first and last name are both required.', 'tangnest-robotics' ),
+					$who
+				);
+				continue;
+			}
+
+			$dob = '';
+			if ( ! empty( $row['date_of_birth'] ) ) {
+				$raw_dob = sanitize_text_field( $row['date_of_birth'] );
+				$dt      = DateTime::createFromFormat( 'Y-m-d', $raw_dob );
+				if ( ! $dt || $dt->format( 'Y-m-d' ) !== $raw_dob ) {
+					$errors[] = sprintf(
+						/* translators: %s: child's name */
+						__( '%s: date of birth is not a valid date.', 'tangnest-robotics' ),
+						$who
+					);
+					continue;
+				}
+				$dob = $raw_dob;
+			}
+
+			$school = isset( $row['school'] ) ? sanitize_text_field( $row['school'] ) : '';
+
+			$program_id = isset( $row['program_id'] ) ? absint( $row['program_id'] ) : 0;
+			$program    = $program_id > 0 ? TR_Programs::get( $program_id ) : null;
+			if ( null === $program ) {
+				$errors[] = sprintf(
+					/* translators: %s: child's name */
+					__( '%s: please select a program.', 'tangnest-robotics' ),
+					$who
+				);
+				continue;
+			}
+
+			$enrolled_on = isset( $row['enrolled_on'] ) ? sanitize_text_field( $row['enrolled_on'] ) : '';
+			$dt          = DateTime::createFromFormat( 'Y-m-d', $enrolled_on );
+			if ( ! $dt || $dt->format( 'Y-m-d' ) !== $enrolled_on ) {
+				$errors[] = sprintf(
+					/* translators: %s: child's name */
+					__( '%s: enrollment date is not a valid date.', 'tangnest-robotics' ),
+					$who
+				);
+				continue;
+			}
+
+			$valid_children[] = [
+				'first_name'    => $first,
+				'last_name'     => $last,
+				'date_of_birth' => $dob,
+				'school'        => $school,
+				'program_id'    => $program_id,
+				'program'       => $program,
+				'enrolled_on'   => $enrolled_on,
+			];
+		}
+
+		return [ $valid_children, $errors ];
 	}
 
 	private static function generate_username( string $email ): string {
@@ -181,6 +308,19 @@ class TR_Family_Edit {
 
 		$user_search = isset( $_GET['user_search'] ) ? sanitize_text_field( wp_unslash( $_GET['user_search'] ) ) : '';
 		$selected_user_id = isset( $posted['existing_user_id'] ) ? absint( $posted['existing_user_id'] ) : ( $parent_user ? $parent_user->ID : 0 );
+
+		$is_custom       = isset( $posted['amount_is_custom'] ) ? ! empty( $posted['amount_is_custom'] ) : ( $family ? (bool) $family->amount_is_custom : false );
+		$calculated_now  = $family ? TR_Families::calculate_amount( (int) $family->id ) : 0.0;
+		$custom_value    = $posted['custom_amount'] ?? ( $family->monthly_amount ?? '0.00' );
+		$active_children = $family ? count( TR_Enrollments::get_active_by_family( (int) $family->id ) ) : 0;
+
+		$active_programs = TR_Programs::get_list( [ 'status' => 'active', 'per_page' => 200 ] );
+		$program_fees    = [];
+		foreach ( $active_programs as $program ) {
+			$program_fees[ (int) $program->id ] = (float) $program->default_monthly_fee;
+		}
+
+		$posted_children = isset( $posted['new_children'] ) && is_array( $posted['new_children'] ) ? array_values( $posted['new_children'] ) : [];
 		?>
 		<div class="wrap tr-admin-wrap">
 			<h1><?php echo $family ? esc_html__( 'Edit Family', 'tangnest-robotics' ) : esc_html__( 'Add Family', 'tangnest-robotics' ); ?></h1>
@@ -246,8 +386,24 @@ class TR_Family_Edit {
 						<td><input type="text" id="tr-phone" name="phone" placeholder="07XXXXXXXX" value="<?php echo esc_attr( $phone ); ?>"></td>
 					</tr>
 					<tr>
-						<th><label for="tr-monthly-amount"><?php esc_html_e( 'Monthly amount (RWF)', 'tangnest-robotics' ); ?></label></th>
-						<td><input type="number" id="tr-monthly-amount" name="monthly_amount" step="0.01" min="0" required value="<?php echo esc_attr( $posted['monthly_amount'] ?? ( $family->monthly_amount ?? '0.00' ) ); ?>"></td>
+						<th><?php esc_html_e( 'Monthly amount (RWF)', 'tangnest-robotics' ); ?></th>
+						<td>
+							<p>
+								<strong id="tr-calculated-display"><?php echo esc_html( number_format( $is_custom ? (float) $custom_value : $calculated_now, 2 ) ); ?> RWF</strong>
+								<span id="tr-calculated-working" class="description" style="<?php echo $is_custom ? 'display:none;' : ''; ?>">
+									<?php echo esc_html( self::working_text( $active_children, $calculated_now ) ); ?>
+								</span>
+							</p>
+							<label>
+								<input type="checkbox" id="tr-amount-custom" name="amount_is_custom" value="1" <?php checked( $is_custom ); ?>>
+								<?php esc_html_e( 'Custom family amount (bundle)', 'tangnest-robotics' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'Tick this when siblings get a negotiated total instead of the sum of their program fees.', 'tangnest-robotics' ); ?></p>
+							<p id="tr-custom-amount-row" style="<?php echo $is_custom ? '' : 'display:none;'; ?>">
+								<label for="tr-custom-amount"><?php esc_html_e( 'Custom total (RWF)', 'tangnest-robotics' ); ?></label>
+								<input type="number" id="tr-custom-amount" name="custom_amount" step="0.01" min="0" value="<?php echo esc_attr( $custom_value ); ?>">
+							</p>
+						</td>
 					</tr>
 					<tr>
 						<th><label for="tr-billing-day"><?php esc_html_e( 'Billing day', 'tangnest-robotics' ); ?></label></th>
@@ -278,28 +434,158 @@ class TR_Family_Edit {
 					</tr>
 				</table>
 
+				<?php if ( $family ) : ?>
+					<h2><?php esc_html_e( 'Children', 'tangnest-robotics' ); ?></h2>
+					<?php self::render_students_sublist( (int) $family->id ); ?>
+				<?php endif; ?>
+
+				<h3><?php esc_html_e( 'Add child', 'tangnest-robotics' ); ?></h3>
+				<p class="description"><?php esc_html_e( 'Add as many children as needed, then save once.', 'tangnest-robotics' ); ?></p>
+				<table class="wp-list-table widefat fixed striped" id="tr-new-children-table">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'First name', 'tangnest-robotics' ); ?></th>
+							<th><?php esc_html_e( 'Last name', 'tangnest-robotics' ); ?></th>
+							<th><?php esc_html_e( 'Date of birth', 'tangnest-robotics' ); ?></th>
+							<th><?php esc_html_e( 'School', 'tangnest-robotics' ); ?></th>
+							<th><?php esc_html_e( 'Program', 'tangnest-robotics' ); ?></th>
+							<th><?php esc_html_e( 'Enrolled on', 'tangnest-robotics' ); ?></th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody id="tr-new-children-body"></tbody>
+				</table>
+				<p><button type="button" class="button" id="tr-add-child"><?php esc_html_e( 'Add child', 'tangnest-robotics' ); ?></button></p>
+
 				<?php submit_button( $family ? __( 'Update Family', 'tangnest-robotics' ) : __( 'Add Family', 'tangnest-robotics' ) ); ?>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_FAMILIES ) ); ?>"><?php esc_html_e( 'Cancel', 'tangnest-robotics' ); ?></a>
 			</form>
-
-			<?php if ( $family ) : ?>
-				<hr>
-				<h2><?php esc_html_e( 'Students', 'tangnest-robotics' ); ?></h2>
-				<?php self::render_students_sublist( (int) $family->id ); ?>
-			<?php endif; ?>
 		</div>
 		<script>
 		(function() {
-			var cb = document.getElementById( 'tr-override-anchor' );
-			var input = document.getElementById( 'tr-billing-day' );
-			if ( cb && input ) {
-				cb.addEventListener( 'change', function() {
-					input.readOnly = ! cb.checked;
+			var programFees = <?php echo wp_json_encode( $program_fees ); ?>;
+			var programOptions = <?php echo wp_json_encode( array_map( static function ( $p ) {
+				return [ 'id' => (int) $p->id, 'label' => $p->name . ' (' . number_format( (float) $p->default_monthly_fee, 2 ) . ' RWF)' ];
+			}, $active_programs ) ); ?>;
+			var postedChildren = <?php echo wp_json_encode( $posted_children ); ?>;
+			var baselineTotal = <?php echo wp_json_encode( (float) $calculated_now ); ?>;
+			var baselineCount = <?php echo wp_json_encode( (int) $active_children ); ?>;
+
+			var body       = document.getElementById( 'tr-new-children-body' );
+			var addBtn     = document.getElementById( 'tr-add-child' );
+			var customCb   = document.getElementById( 'tr-amount-custom' );
+			var customRow  = document.getElementById( 'tr-custom-amount-row' );
+			var workingEl  = document.getElementById( 'tr-calculated-working' );
+			var displayEl  = document.getElementById( 'tr-calculated-display' );
+			var customInput = document.getElementById( 'tr-custom-amount' );
+			var rowIndex   = 0;
+
+			function fmt( n ) {
+				return n.toLocaleString( 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 } );
+			}
+
+			function recompute() {
+				var total = baselineTotal;
+				var count = baselineCount;
+
+				body.querySelectorAll( 'select.tr-child-program' ).forEach( function( sel ) {
+					var fee = programFees[ sel.value ];
+					if ( fee !== undefined ) {
+						total += fee;
+						count += 1;
+					}
+				} );
+
+				if ( customCb.checked ) {
+					displayEl.textContent = fmt( parseFloat( customInput.value || '0' ) ) + ' RWF';
+					workingEl.style.display = 'none';
+				} else {
+					displayEl.textContent = fmt( total ) + ' RWF';
+					workingEl.style.display = '';
+					workingEl.textContent = count === 1
+						? ( '1 ' + <?php echo wp_json_encode( __( 'child', 'tangnest-robotics' ) ); ?> + ' — ' + fmt( total ) + ' RWF ' + <?php echo wp_json_encode( __( 'calculated', 'tangnest-robotics' ) ); ?> )
+						: ( count + ' ' + <?php echo wp_json_encode( __( 'children', 'tangnest-robotics' ) ); ?> + ' — ' + fmt( total ) + ' RWF ' + <?php echo wp_json_encode( __( 'calculated', 'tangnest-robotics' ) ); ?> );
+				}
+			}
+
+			function escHtml( s ) {
+				return String( s === undefined || s === null ? '' : s )
+					.replace( /&/g, '&amp;' )
+					.replace( /</g, '&lt;' )
+					.replace( />/g, '&gt;' )
+					.replace( /"/g, '&quot;' );
+			}
+
+			function addChildRow( data ) {
+				data = data || {};
+				var idx = rowIndex++;
+				var tr = document.createElement( 'tr' );
+
+				function field( type, name, value ) {
+					return '<input type="' + type + '" name="new_children[' + idx + '][' + name + ']" value="' + escHtml( value ) + '">';
+				}
+
+				var optionsHtml = '<option value="0"><?php echo esc_js( __( '— Select program —', 'tangnest-robotics' ) ); ?></option>';
+				programOptions.forEach( function( p ) {
+					var selected = String( p.id ) === String( data.program_id || '' ) ? ' selected' : '';
+					optionsHtml += '<option value="' + p.id + '"' + selected + '>' + escHtml( p.label ) + '</option>';
+				} );
+
+				tr.innerHTML =
+					'<td>' + field( 'text', 'first_name', data.first_name ) + '</td>' +
+					'<td>' + field( 'text', 'last_name', data.last_name ) + '</td>' +
+					'<td>' + field( 'date', 'date_of_birth', data.date_of_birth ) + '</td>' +
+					'<td>' + field( 'text', 'school', data.school ) + '</td>' +
+					'<td><select class="tr-child-program" name="new_children[' + idx + '][program_id]">' + optionsHtml + '</select></td>' +
+					'<td>' + field( 'date', 'enrolled_on', data.enrolled_on || <?php echo wp_json_encode( gmdate( 'Y-m-d' ) ); ?> ) + '</td>' +
+					'<td><button type="button" class="button-link tr-remove-child"><?php echo esc_js( __( 'Remove', 'tangnest-robotics' ) ); ?></button></td>';
+
+				body.appendChild( tr );
+
+				tr.querySelector( '.tr-child-program' ).addEventListener( 'change', recompute );
+				tr.querySelector( '.tr-remove-child' ).addEventListener( 'click', function() {
+					tr.parentNode.removeChild( tr );
+					recompute();
+				} );
+
+				recompute();
+			}
+
+			addBtn.addEventListener( 'click', function() { addChildRow(); } );
+
+			customCb.addEventListener( 'change', function() {
+				customRow.style.display = customCb.checked ? '' : 'none';
+				recompute();
+			} );
+			customInput.addEventListener( 'input', recompute );
+
+			postedChildren.forEach( function( row ) { addChildRow( row ); } );
+
+			var overrideCb = document.getElementById( 'tr-override-anchor' );
+			var billingInput = document.getElementById( 'tr-billing-day' );
+			if ( overrideCb && billingInput ) {
+				overrideCb.addEventListener( 'change', function() {
+					billingInput.readOnly = ! overrideCb.checked;
 				} );
 			}
+
+			recompute();
 		})();
 		</script>
 		<?php
+	}
+
+	private static function working_text( int $count, float $total ): string {
+		if ( 0 === $count ) {
+			return __( 'No active children yet.', 'tangnest-robotics' );
+		}
+
+		return sprintf(
+			/* translators: 1: number of active children, 2: calculated total */
+			_n( '%1$d child — %2$s RWF calculated', '%1$d children — %2$s RWF calculated', $count, 'tangnest-robotics' ),
+			$count,
+			number_format( $total, 2 )
+		);
 	}
 
 	private static function render_students_sublist( int $family_id ): void {

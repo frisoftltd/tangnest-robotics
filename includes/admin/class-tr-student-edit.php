@@ -31,14 +31,12 @@ class TR_Student_Edit {
 
 		$family_id = 0;
 		$new_email = $new_first = $new_last = $new_phone = '';
-		$new_monthly_amount = 0.0;
 
 		if ( 'new' === $family_mode ) {
 			$new_email = isset( $_POST['new_email'] ) ? sanitize_email( wp_unslash( $_POST['new_email'] ) ) : '';
 			$new_first = isset( $_POST['new_first_name'] ) ? sanitize_text_field( wp_unslash( $_POST['new_first_name'] ) ) : '';
 			$new_last  = isset( $_POST['new_last_name'] ) ? sanitize_text_field( wp_unslash( $_POST['new_last_name'] ) ) : '';
 			$new_phone = isset( $_POST['new_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['new_phone'] ) ) : '';
-			$new_monthly_amount = isset( $_POST['new_monthly_amount'] ) ? (float) wp_unslash( $_POST['new_monthly_amount'] ) : -1;
 
 			if ( ! is_email( $new_email ) ) {
 				$errors[] = __( 'Please enter a valid email for the new parent.', 'tangnest-robotics' );
@@ -52,10 +50,6 @@ class TR_Student_Edit {
 
 			if ( ! preg_match( '/^07\d{8}$/', $new_phone ) ) {
 				$errors[] = __( 'Phone must be in the format 07XXXXXXXX.', 'tangnest-robotics' );
-			}
-
-			if ( $new_monthly_amount < 0 ) {
-				$errors[] = __( 'Monthly amount must be zero or greater.', 'tangnest-robotics' );
 			}
 		} else {
 			$family_id = isset( $_POST['family_id'] ) ? absint( $_POST['family_id'] ) : 0;
@@ -126,7 +120,7 @@ class TR_Student_Edit {
 
 			$family_id = TR_Families::insert( [
 				'parent_user_id' => $user_id,
-				'monthly_amount' => $new_monthly_amount,
+				'monthly_amount' => 0,
 				'currency'       => 'RWF',
 				'billing_day'    => 0,
 				'status'         => 'active',
@@ -171,7 +165,7 @@ class TR_Student_Edit {
 		}
 
 		TR_Families::set_billing_anchor( $family_id, $enrolled_on );
-		TR_Families::flag_composition_change( $family_id );
+		TR_Families::recalculate_amount( $family_id );
 
 		if ( 'new' === $family_mode ) {
 			TR_Notifications::maybe_send_welcome_email( $user_id, $family_id );
@@ -291,10 +285,6 @@ class TR_Student_Edit {
 								<tr>
 									<th><label for="tr-new-phone"><?php esc_html_e( 'Phone', 'tangnest-robotics' ); ?></label></th>
 									<td><input type="text" id="tr-new-phone" name="new_phone" placeholder="07XXXXXXXX" value="<?php echo esc_attr( $posted['new_phone'] ?? '' ); ?>"></td>
-								</tr>
-								<tr>
-									<th><label for="tr-new-amount"><?php esc_html_e( 'Monthly amount (RWF)', 'tangnest-robotics' ); ?></label></th>
-									<td><input type="number" id="tr-new-amount" name="new_monthly_amount" step="0.01" min="0" value="<?php echo esc_attr( $posted['new_monthly_amount'] ?? '0.00' ); ?>"></td>
 								</tr>
 							</table>
 						</td>
