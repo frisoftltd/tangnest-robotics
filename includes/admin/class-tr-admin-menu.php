@@ -21,6 +21,7 @@ class TR_Admin_Menu {
 		add_filter( 'admin_body_class', [ $this, 'filter_admin_body_class' ] );
 		add_action( 'admin_notices', [ $this, 'render_composition_notices' ] );
 		add_action( 'admin_notices', [ $this, 'render_dashboard_page_notice' ] );
+		add_action( 'admin_notices', [ $this, 'render_webhook_secret_mismatch_notice' ] );
 		add_action( 'admin_notices', [ $this, 'render_action_notices' ] );
 
 		add_action( 'admin_init', [ 'TR_Family_Edit', 'maybe_handle_submit' ] );
@@ -462,6 +463,41 @@ class TR_Admin_Menu {
 
 		[ $type, $text ] = $messages[ $notice ];
 		printf( '<div class="notice notice-%s is-dismissible"><p>%s</p></div>', esc_attr( $type ), esc_html( $text ) );
+	}
+
+	/**
+	 * Warns rather than silently overriding anything — clearing this
+	 * plugin's webhook secret (so the reused signature check is skipped
+	 * entirely, matching what IremboPay is actually sending) is a
+	 * deliberate admin action taken under Settings, not something the
+	 * code should decide on its own.
+	 */
+	public function render_webhook_secret_mismatch_notice(): void {
+		if ( ! current_user_can( self::CAP ) ) {
+			return;
+		}
+
+		$screen = get_current_screen();
+		if ( null === $screen || false === strpos( $screen->id, 'tangnest-robotics' ) ) {
+			return;
+		}
+
+		if ( ! TR_IremboPay_Settings::has_webhook_secret_mismatch() ) {
+			return;
+		}
+		?>
+		<div class="notice notice-warning">
+			<p>
+				<?php
+				printf(
+					/* translators: %s: link to the settings page */
+					esc_html__( 'IremboPay webhook secret mismatch: this plugin has a webhook secret saved, but the WooCommerce IremboPay plugin — which owns the only callback URL IremboPay is actually configured to call — has none. IremboPay is therefore not sending a signature, and every real webhook will be rejected with a 401 until you clear the secret under %s.', 'tangnest-robotics' ),
+					'<a href="' . esc_url( admin_url( 'admin.php?page=' . self::PAGE_SETTINGS ) ) . '">' . esc_html__( 'Robotics → Settings', 'tangnest-robotics' ) . '</a>'
+				);
+				?>
+			</p>
+		</div>
+		<?php
 	}
 
 	public function render_dashboard_page_notice(): void {

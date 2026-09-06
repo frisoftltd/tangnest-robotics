@@ -88,4 +88,26 @@ class TR_IremboPay_Settings {
 
 		return str_repeat( '•', 8 ) . substr( $key, -4 );
 	}
+
+	/**
+	 * IremboPay's merchant account has exactly one registered callback URL,
+	 * currently owned by the sibling woocommerce-irembopay plugin — this
+	 * plugin's webhook only ever arrives there too, via TR_Webhook's
+	 * rest_pre_dispatch interception (spec v0.7.1). IremboPay signs (or
+	 * doesn't) based on whatever secret is configured against that one
+	 * URL, i.e. the WooCommerce plugin's own setting — not this plugin's.
+	 * If this plugin has a secret saved but that one doesn't, IremboPay is
+	 * not sending a signature at all, and every real webhook would be
+	 * rejected with a 401 the moment it's intercepted.
+	 */
+	public static function has_webhook_secret_mismatch(): bool {
+		if ( '' === self::webhook_secret() ) {
+			return false;
+		}
+
+		$wc_settings = get_option( 'woocommerce_irembopay_settings', [] );
+		$wc_secret   = is_array( $wc_settings ) ? ( $wc_settings['webhook_secret'] ?? '' ) : '';
+
+		return '' === $wc_secret;
+	}
 }

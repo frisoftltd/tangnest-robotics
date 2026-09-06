@@ -17,6 +17,11 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.7.1
+- Fix: IremboPay payments were never marked paid — the merchant account's one callback URL is owned by the WooCommerce IremboPay plugin and cannot be changed, so our webhook never arrived
+- New: intercepts that shared webhook route, claims only payloads matching one of our own invoices, and leaves everything else completely untouched for the WooCommerce plugin — LMS course payments are unaffected
+- New: admin warning when this plugin's webhook secret is set but the WooCommerce plugin's is empty, since IremboPay then sends no signature and every webhook would otherwise be rejected
+
 ### v0.7.0
 - Fix: Pay now and payment schedule links in emails now sign the parent in automatically
 - New: Emails (and the routine WhatsApp payment reminder) carry their own message token, independent of the WhatsApp access link
