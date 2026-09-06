@@ -68,21 +68,6 @@ class TR_Invoice_Actions {
 			exit;
 		}
 
-		$active_enrollments = TR_Enrollments::get_active_by_family( $family_id );
-		$snapshot            = [];
-		foreach ( $active_enrollments as $enrollment ) {
-			$student = TR_Students::get( (int) $enrollment->student_id );
-			$program = TR_Programs::get( (int) $enrollment->program_id );
-			$months_total = max( (int) $enrollment->months_total, 1 );
-
-			$snapshot[] = [
-				'student_name' => $student ? trim( $student->first_name . ' ' . $student->last_name ) : '',
-				'program_name' => $program->name ?? '',
-				'month_number' => min( (int) $enrollment->months_paid + 1, $months_total ),
-				'months_total' => $months_total,
-			];
-		}
-
 		$invoice_id = TR_Invoices::insert( [
 			'family_id'        => $family_id,
 			'period'           => $period,
@@ -91,7 +76,7 @@ class TR_Invoice_Actions {
 			'status'           => 'pending',
 			'due_date'         => $due_date,
 			'issued_at'        => current_time( 'mysql' ),
-			'student_snapshot' => $snapshot,
+			'student_snapshot' => TR_Invoice_Generator::build_student_snapshot( $family ),
 		] );
 
 		if ( $invoice_id <= 0 ) {
@@ -225,10 +210,10 @@ class TR_Invoice_Actions {
 		] );
 
 		if ( ! $already_paid ) {
-			$active_enrollments = TR_Enrollments::get_active_by_family( (int) $invoice->family_id );
-			foreach ( $active_enrollments as $enrollment ) {
-				TR_Enrollments::increment_months_paid( (int) $enrollment->id );
-			}
+			// Exactly once per family per payment (v0.8.0) — every child on
+			// a package finishes together, so there is one figure to
+			// advance, not one per enrollment.
+			TR_Families::increment_months_paid( (int) $invoice->family_id );
 		}
 
 		self::redirect_with_notice( 'payment_recorded' );

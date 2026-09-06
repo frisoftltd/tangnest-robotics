@@ -75,25 +75,28 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 			<?php else : ?>
 
+				<?php
+				// Every child on the family's package shows the same
+				// package name and progress (v0.8.0) — siblings finish
+				// together, so this is computed once, not per child.
+				$family_package = ! empty( $family->package_id ) ? TR_Programs::get( (int) $family->package_id ) : null;
+				$package_months_total = $family_package ? (int) $family_package->duration_months : 0;
+
+				$family_percent = 0;
+				if ( $package_months_total > 0 ) {
+					$family_percent = min( 100, (int) round( ( (int) $family->months_paid / $package_months_total ) * 100 ) );
+				}
+				?>
+
 				<div class="tr-dashboard__cards">
 					<?php foreach ( $students as $student ) : ?>
-						<?php
-						$enrollments = TR_Enrollments::get_by_student( (int) $student->id );
-						$enrollment  = $enrollments[0] ?? null;
-						$program     = $enrollment ? TR_Programs::get( (int) $enrollment->program_id ) : null;
-
-						$percent = 0;
-						if ( $enrollment && (int) $enrollment->months_total > 0 ) {
-							$percent = min( 100, (int) round( ( (int) $enrollment->months_paid / (int) $enrollment->months_total ) * 100 ) );
-						}
-						?>
 						<div class="tr-dashboard__card">
 							<h3><?php echo esc_html( trim( $student->first_name . ' ' . $student->last_name ) ); ?></h3>
-							<p class="tr-dashboard__program"><?php echo esc_html( $program->name ?? __( 'No program yet', 'tangnest-robotics' ) ); ?></p>
-							<?php if ( $enrollment ) : ?>
-								<p class="tr-dashboard__progress-label"><?php echo esc_html( TR_Enrollments::progress_label( $enrollment ) ); ?></p>
+							<p class="tr-dashboard__program"><?php echo esc_html( $family_package->name ?? __( 'No package yet', 'tangnest-robotics' ) ); ?></p>
+							<?php if ( $family_package ) : ?>
+								<p class="tr-dashboard__progress-label"><?php echo esc_html( TR_Families::progress_label( $family ) ); ?></p>
 								<div class="tr-dashboard__progress-bar">
-									<div class="tr-dashboard__progress-fill" style="width: <?php echo esc_attr( $percent ); ?>%;"></div>
+									<div class="tr-dashboard__progress-fill" style="width: <?php echo esc_attr( $family_percent ); ?>%;"></div>
 								</div>
 							<?php endif; ?>
 							<p class="tr-dashboard__status tr-dashboard__status--<?php echo esc_attr( $student->status ); ?>"><?php echo esc_html( ucfirst( $student->status ) ); ?></p>
@@ -161,7 +164,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 						?>
 					</p>
 					<?php if ( TR_IremboPay_Settings::is_enabled() ) : ?>
-						<?php if ( TR_Payment::has_resolvable_product_code( $earliest_due ) ) : ?>
+						<?php if ( TR_Payment::is_payable( $earliest_due ) ) : ?>
 							<a class="tr-payment-button tr-payment-button--dashboard" href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $earliest_due->id ) ); ?>"><?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?></a>
 						<?php else : ?>
 							<p class="tr-dashboard__due-sub"><?php esc_html_e( 'Contact Tangnest to pay this month.', 'tangnest-robotics' ); ?></p>
@@ -186,7 +189,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 							<span class="tr-dashboard__invoice-amount"><?php echo esc_html( number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency ); ?></span>
 							<span class="tr-badge tr-badge--<?php echo esc_attr( $invoice->status ); ?>"><?php echo esc_html( ucfirst( $invoice->status ) ); ?></span>
 							<?php if ( TR_IremboPay_Settings::is_enabled() && in_array( $invoice->status, [ 'pending', 'overdue' ], true ) ) : ?>
-								<?php if ( TR_Payment::has_resolvable_product_code( $invoice ) ) : ?>
+								<?php if ( TR_Payment::is_payable( $invoice ) ) : ?>
 									<a class="tr-payment-button tr-payment-button--small" href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $invoice->id ) ); ?>"><?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?></a>
 								<?php else : ?>
 									<span class="tr-dashboard__invoice-meta"><?php esc_html_e( 'Contact Tangnest to pay this month.', 'tangnest-robotics' ); ?></span>

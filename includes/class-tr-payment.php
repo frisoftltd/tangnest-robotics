@@ -87,7 +87,9 @@ class TR_Payment {
 	/**
 	 * The same sequence the webhook and the admin "Record payment" action
 	 * both use — one code path for "an invoice just got paid", not
-	 * multiple copies of it.
+	 * multiple copies of it. Advances the family exactly once (v0.8.0) —
+	 * every child on a package finishes together, so progress lives on the
+	 * family now, not once per enrollment.
 	 */
 	public static function mark_paid_and_advance( int $invoice_id, int $family_id, string $transaction_id ): void {
 		TR_Invoices::mark_paid( $invoice_id, [
@@ -96,10 +98,7 @@ class TR_Payment {
 			'recorded_by'       => 0,
 		] );
 
-		$active_enrollments = TR_Enrollments::get_active_by_family( $family_id );
-		foreach ( $active_enrollments as $enrollment ) {
-			TR_Enrollments::increment_months_paid( (int) $enrollment->id );
-		}
+		TR_Families::increment_months_paid( $family_id );
 	}
 
 	private static function create_new( TR_IremboPay_API $api, object $invoice, object $family, WP_User $user ): array {
@@ -117,14 +116,14 @@ class TR_Payment {
 		// dashboard and emails are also supposed to hide the Pay button in
 		// this exact situation (see has_resolvable_product_code()), so
 		// reaching this point at all means that guard was bypassed or a
-		// program was edited after the button was rendered.
+		// package was edited after the button was rendered.
 		if ( '' === $product_code ) {
 			TR_Logger::error( 'Cannot start IremboPay payment: no product code resolves for this invoice', [
-				'invoice_id'      => $invoice->id,
-				'family_id'       => $family->id,
-				'programs_no_code' => self::program_names_missing_code( $invoice ),
+				'invoice_id' => $invoice->id,
+				'family_id'  => $family->id,
+				'issue'      => self::package_issue_for_invoice( $invoice ),
 			] );
-			return self::error( __( 'Online payment is not set up for this program yet. Please contact Tangnest.', 'tangnest-robotics' ) );
+			return self::error( __( 'Online payment is not set up for this package yet. Please contact Tangnest.', 'tangnest-robotics' ) );
 		}
 
 		$payment_item = [
@@ -192,31 +191,58 @@ class TR_Payment {
 		return '' !== self::product_code_for_invoice( $invoice );
 	}
 
-	public static function product_code_for_invoice( object $invoice ): string {
-		$enrollments = TR_Enrollments::get_active_by_family( (int) $invoice->family_id );
+	/**
+	 * The single check every Pay button should use (v0.8.0). A family with
+	 * no package at all must never show one, even if a global default
+	 * product code happens to be configured — that default exists to cover
+	 * a package with no code of its own, not a missing package entirely.
+	 */
+	public static function is_payable( object $invoice ): bool {
+		$family = TR_Families::get( (int) $invoice->family_id );
+		if ( null === $family || empty( $family->package_id ) ) {
+			return false;
+		}
 
-		foreach ( $enrollments as $enrollment ) {
-			$program = TR_Programs::get( (int) $enrollment->program_id );
-			if ( $program && ! empty( $program->irembopay_product_code ) ) {
-				return $program->irembopay_product_code;
+		return self::has_resolvable_product_code( $invoice );
+	}
+
+	/**
+	 * The family's package code, falling back to the settings default —
+	 * there is exactly one package per family now (v0.8.0), not one
+	 * program per child, so there is no "first active enrollment with a
+	 * code" search to do any more.
+	 */
+	public static function product_code_for_invoice( object $invoice ): string {
+		$family = TR_Families::get( (int) $invoice->family_id );
+
+		if ( $family && ! empty( $family->package_id ) ) {
+			$package = TR_Programs::get( (int) $family->package_id );
+			if ( $package && ! empty( $package->irembopay_product_code ) ) {
+				return $package->irembopay_product_code;
 			}
 		}
 
 		return TR_IremboPay_Settings::default_product_code();
 	}
 
-	private static function program_names_missing_code( object $invoice ): array {
-		$enrollments = TR_Enrollments::get_active_by_family( (int) $invoice->family_id );
+	/**
+	 * For the log line only, when create_new() finds no resolvable code at
+	 * all — names the specific package missing one, or notes the family
+	 * has no package, so the log says what an admin needs to go fix.
+	 */
+	private static function package_issue_for_invoice( object $invoice ): string {
+		$family = TR_Families::get( (int) $invoice->family_id );
 
-		$names = [];
-		foreach ( $enrollments as $enrollment ) {
-			$program = TR_Programs::get( (int) $enrollment->program_id );
-			if ( $program && empty( $program->irembopay_product_code ) ) {
-				$names[] = $program->name;
-			}
+		if ( null === $family || empty( $family->package_id ) ) {
+			return 'family has no package';
 		}
 
-		return $names;
+		$package = TR_Programs::get( (int) $family->package_id );
+		if ( null === $package ) {
+			return 'family package no longer exists';
+		}
+
+		return empty( $package->irembopay_product_code ) ? 'package "' . $package->name . '" has no product code' : '';
 	}
 
 	private static function student_names_for_invoice( object $invoice ): array {

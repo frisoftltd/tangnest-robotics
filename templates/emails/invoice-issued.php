@@ -4,8 +4,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * "Invoice issued" email body. Included by
  * TR_Notifications::render_invoice_issued_template() with $user (WP_User),
  * $invoice (object: period, amount, currency, due_date), $students (array
- * of ['student_name'=>, 'program_name'=>, 'month_number'=>, 'months_total'=>]),
- * $access_url and $pay_url already in scope.
+ * of ['student_name'=>, 'package_name'=>, 'month_number'=>, 'months_total'=>]
+ * — every row carries the same family-level package/progress since v0.8.0,
+ * siblings finish together), $access_url and $pay_url already in scope.
  *
  * Both carry a message token (spec v0.7.0) minted fresh for this one send
  * — independent of the device-bound access token, so this email can never
@@ -70,8 +71,8 @@ $due_date   = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_d
 									<li>
 										<?php
 										echo esc_html( $student['student_name'] ?? '' );
-										if ( ! empty( $student['program_name'] ) ) {
-											echo ' &mdash; ' . esc_html( $student['program_name'] );
+										if ( ! empty( $student['package_name'] ) ) {
+											echo ' &mdash; ' . esc_html( $student['package_name'] );
 										}
 										if ( ! empty( $student['month_number'] ) && ! empty( $student['months_total'] ) ) {
 											echo ' ' . esc_html(
@@ -89,7 +90,7 @@ $due_date   = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_d
 							</ul>
 						<?php endif; ?>
 
-						<?php if ( '' !== $pay_url && TR_IremboPay_Settings::is_enabled() && TR_Payment::has_resolvable_product_code( $invoice ) ) : ?>
+						<?php if ( '' !== $pay_url && TR_IremboPay_Settings::is_enabled() && TR_Payment::is_payable( $invoice ) ) : ?>
 							<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
 								<?php esc_html_e( 'You can pay online right now with IremboPay, or keep paying cash, bank transfer or mobile money as usual — just let us know once you\'ve paid so we can mark it.', 'tangnest-robotics' ); ?>
 							</p>

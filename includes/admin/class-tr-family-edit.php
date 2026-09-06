@@ -3,11 +3,12 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
  * Family add/edit form: pick-or-create parent WP user, phone/meta, the
- * calculated (or bundle-override) monthly amount, the billing-day anchor
- * (read-only once set unless the admin explicitly checks "override
- * anchor"), and an inline repeatable Children section so several siblings
- * can be added in one save instead of one trip through the standalone
- * Add Student screen per child.
+ * package selection that drives price/duration/product code (v0.8.0 —
+ * replaces the old per-child program + bundle-override model), the
+ * billing-day anchor (read-only once set unless the admin explicitly
+ * checks "override anchor"), and an inline repeatable Children section so
+ * several siblings can be added in one save instead of one trip through
+ * the standalone Add Student screen per child.
  */
 class TR_Family_Edit {
 	const NONCE = 'tr_family_save';
@@ -36,10 +37,10 @@ class TR_Family_Edit {
 			$errors[] = __( 'Phone must be in the format 07XXXXXXXX.', 'tangnest-robotics' );
 		}
 
-		$amount_is_custom = ! empty( $_POST['amount_is_custom'] );
-		$custom_amount    = isset( $_POST['custom_amount'] ) ? (float) wp_unslash( $_POST['custom_amount'] ) : -1;
-		if ( $amount_is_custom && $custom_amount < 0 ) {
-			$errors[] = __( 'Custom amount must be zero or greater.', 'tangnest-robotics' );
+		$package_id = isset( $_POST['package_id'] ) ? absint( $_POST['package_id'] ) : 0;
+		$package    = $package_id > 0 ? TR_Programs::get( $package_id ) : null;
+		if ( null === $package ) {
+			$errors[] = __( 'Please select a package.', 'tangnest-robotics' );
 		}
 
 		$billing_day_input = isset( $_POST['billing_day'] ) ? absint( $_POST['billing_day'] ) : 0;
@@ -147,20 +148,26 @@ class TR_Family_Edit {
 		update_user_meta( $user_id, 'parent_name', $user->display_name );
 		update_user_meta( $user_id, 'parent_email', $user->user_email );
 
+		$existing_family = $family_id > 0 ? TR_Families::get( $family_id ) : null;
+
 		$data = [
-			// Placeholder when calculated — recalculate_amount() below sets
-			// the real figure once this family's children are in place.
-			'monthly_amount'   => $amount_is_custom ? $custom_amount : 0,
-			'amount_is_custom' => $amount_is_custom,
-			'parent_user_id'   => $user_id,
-			'currency'         => 'RWF',
-			'status'           => $status,
-			'notes'            => $notes,
+			// A snapshot of the package's price right now — never
+			// recalculated automatically later, so a subsequent price
+			// change on the package never retroactively alters this
+			// family's billing. Re-saving the family (e.g. to switch
+			// package) always refreshes the snapshot to the new package's
+			// current price.
+			'monthly_amount' => $package->default_monthly_fee,
+			'package_id'     => $package_id,
+			'months_paid'    => $existing_family ? (int) $existing_family->months_paid : 0,
+			'parent_user_id' => $user_id,
+			'currency'       => 'RWF',
+			'status'         => $status,
+			'notes'          => $notes,
 		];
 
 		if ( $family_id > 0 ) {
-			$existing     = TR_Families::get( $family_id );
-			$billing_day  = $existing ? (int) $existing->billing_day : 0;
+			$billing_day = $existing_family ? (int) $existing_family->billing_day : 0;
 			if ( 0 === $billing_day || $override_anchor ) {
 				$billing_day = $billing_day_input;
 			}
@@ -183,7 +190,7 @@ class TR_Family_Edit {
 		}
 
 		foreach ( $valid_children as $child ) {
-			$new_student_id = TR_Students::insert( [
+			TR_Students::insert( [
 				'family_id'     => $family_id,
 				'first_name'    => $child['first_name'],
 				'last_name'     => $child['last_name'],
@@ -192,22 +199,9 @@ class TR_Family_Edit {
 				'status'        => 'active',
 			] );
 
-			TR_Enrollments::insert( [
-				'student_id'   => $new_student_id,
-				'program_id'   => $child['program_id'],
-				'enrolled_on'  => $child['enrolled_on'],
-				'months_total' => (int) $child['program']->duration_months,
-				'months_paid'  => 0,
-				'status'       => 'active',
-			] );
-
 			// Idempotent — only the first child ever actually moves this
 			// from 0, regardless of how many rows are processed here.
 			TR_Families::set_billing_anchor( $family_id, $child['enrolled_on'] );
-		}
-
-		if ( ! $amount_is_custom ) {
-			TR_Families::recalculate_amount( $family_id );
 		}
 
 		TR_Families::clear_composition_flag( $family_id );
@@ -228,7 +222,10 @@ class TR_Family_Edit {
 	/**
 	 * A fully blank row is just an unused template row appended by the "Add
 	 * child" button and never filled in — silently skipped, not an error.
-	 * Any row with at least a name in it is validated fully.
+	 * Any row with at least a name in it is validated fully. No program
+	 * field here (v0.8.0) — the family's package covers every child on it;
+	 * "enrolled_on" stays because it's still what sets the billing anchor
+	 * for a family that doesn't have one yet.
 	 */
 	private static function parse_children_rows( $raw_rows ): array {
 		$valid_children = [];
@@ -278,17 +275,6 @@ class TR_Family_Edit {
 
 			$school = isset( $row['school'] ) ? sanitize_text_field( $row['school'] ) : '';
 
-			$program_id = isset( $row['program_id'] ) ? absint( $row['program_id'] ) : 0;
-			$program    = $program_id > 0 ? TR_Programs::get( $program_id ) : null;
-			if ( null === $program ) {
-				$errors[] = sprintf(
-					/* translators: %s: child's name */
-					__( '%s: please select a program.', 'tangnest-robotics' ),
-					$who
-				);
-				continue;
-			}
-
 			$enrolled_on = isset( $row['enrolled_on'] ) ? sanitize_text_field( $row['enrolled_on'] ) : '';
 			$dt          = DateTime::createFromFormat( 'Y-m-d', $enrolled_on );
 			if ( ! $dt || $dt->format( 'Y-m-d' ) !== $enrolled_on ) {
@@ -305,8 +291,6 @@ class TR_Family_Edit {
 				'last_name'     => $last,
 				'date_of_birth' => $dob,
 				'school'        => $school,
-				'program_id'    => $program_id,
-				'program'       => $program,
 				'enrolled_on'   => $enrolled_on,
 			];
 		}
@@ -368,15 +352,25 @@ class TR_Family_Edit {
 		$existing_parent_first  = $posted['existing_first_name'] ?? ( $selected_existing_user ? $selected_existing_user->first_name : '' );
 		$existing_parent_last   = $posted['existing_last_name'] ?? ( $selected_existing_user ? $selected_existing_user->last_name : '' );
 
-		$is_custom       = isset( $posted['amount_is_custom'] ) ? ! empty( $posted['amount_is_custom'] ) : ( $family ? (bool) $family->amount_is_custom : false );
-		$calculated_now  = $family ? TR_Families::calculate_amount( (int) $family->id ) : 0.0;
-		$custom_value    = $posted['custom_amount'] ?? ( $family->monthly_amount ?? '0.00' );
-		$active_children = $family ? count( TR_Enrollments::get_active_by_family( (int) $family->id ) ) : 0;
+		$active_packages = TR_Programs::get_list( [ 'status' => 'active', 'per_page' => 200 ] );
 
-		$active_programs = TR_Programs::get_list( [ 'status' => 'active', 'per_page' => 200 ] );
-		$program_fees    = [];
-		foreach ( $active_programs as $program ) {
-			$program_fees[ (int) $program->id ] = (float) $program->default_monthly_fee;
+		// A family whose package has since been archived must still show
+		// it selected, not silently fall back to "— Select —".
+		$selected_package_id = isset( $posted['package_id'] ) ? absint( $posted['package_id'] ) : (int) ( $family->package_id ?? 0 );
+		$selected_package    = $selected_package_id > 0 ? TR_Programs::get( $selected_package_id ) : null;
+
+		$dropdown_packages = $active_packages;
+		if ( $selected_package && 'active' !== $selected_package->status ) {
+			$dropdown_packages[] = $selected_package;
+		}
+
+		$package_details = [];
+		foreach ( $dropdown_packages as $package ) {
+			$package_details[ (int) $package->id ] = [
+				'amount'   => number_format( (float) $package->default_monthly_fee, 2 ),
+				'duration' => (int) $package->duration_months,
+				'code'     => $package->irembopay_product_code ?? '',
+			];
 		}
 
 		$posted_children = isset( $posted['new_children'] ) && is_array( $posted['new_children'] ) ? array_values( $posted['new_children'] ) : [];
@@ -464,23 +458,39 @@ class TR_Family_Edit {
 						<td><input type="text" id="tr-phone" name="phone" placeholder="07XXXXXXXX" value="<?php echo esc_attr( $phone ); ?>"></td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Monthly amount (RWF)', 'tangnest-robotics' ); ?></th>
+						<th><label for="tr-package"><?php esc_html_e( 'Package', 'tangnest-robotics' ); ?></label></th>
 						<td>
-							<p>
-								<strong id="tr-calculated-display"><?php echo esc_html( number_format( $is_custom ? (float) $custom_value : $calculated_now, 2 ) ); ?> RWF</strong>
-								<span id="tr-calculated-working" class="description" style="<?php echo $is_custom ? 'display:none;' : ''; ?>">
-									<?php echo esc_html( self::working_text( $active_children, $calculated_now ) ); ?>
-								</span>
+							<select id="tr-package" name="package_id">
+								<option value="0"><?php esc_html_e( '— Select package —', 'tangnest-robotics' ); ?></option>
+								<?php foreach ( $dropdown_packages as $package ) : ?>
+									<option value="<?php echo esc_attr( $package->id ); ?>" <?php selected( $selected_package_id, (int) $package->id ); ?>>
+										<?php
+										echo esc_html( $package->name . ' — ' . number_format( (float) $package->default_monthly_fee, 2 ) . ' RWF' );
+										if ( 'active' !== $package->status ) {
+											echo ' ' . esc_html__( '(inactive)', 'tangnest-robotics' );
+										}
+										?>
+									</option>
+								<?php endforeach; ?>
+							</select>
+							<p class="description" id="tr-package-details">
+								<?php if ( $selected_package ) : ?>
+									<?php
+									printf(
+										/* translators: 1: amount, 2: duration in months, 3: product code */
+										esc_html__( '%1$s RWF/month — %2$d months — code %3$s', 'tangnest-robotics' ),
+										esc_html( number_format( (float) $selected_package->default_monthly_fee, 2 ) ),
+										(int) $selected_package->duration_months,
+										esc_html( $selected_package->irembopay_product_code ?: '(none)' )
+									);
+									?>
+								<?php else : ?>
+									<?php esc_html_e( 'Select a package to see its price, duration and product code.', 'tangnest-robotics' ); ?>
+								<?php endif; ?>
 							</p>
-							<label>
-								<input type="checkbox" id="tr-amount-custom" name="amount_is_custom" value="1" <?php checked( $is_custom ); ?>>
-								<?php esc_html_e( 'Custom family amount (bundle)', 'tangnest-robotics' ); ?>
-							</label>
-							<p class="description"><?php esc_html_e( 'Tick this when siblings get a negotiated total instead of the sum of their program fees.', 'tangnest-robotics' ); ?></p>
-							<p id="tr-custom-amount-row" style="<?php echo $is_custom ? '' : 'display:none;'; ?>">
-								<label for="tr-custom-amount"><?php esc_html_e( 'Custom total (RWF)', 'tangnest-robotics' ); ?></label>
-								<input type="number" id="tr-custom-amount" name="custom_amount" step="0.01" min="0" value="<?php echo esc_attr( $custom_value ); ?>">
-							</p>
+							<?php if ( $family ) : ?>
+								<p class="description"><strong><?php echo esc_html( TR_Families::progress_label( $family ) ); ?></strong></p>
+							<?php endif; ?>
 						</td>
 					</tr>
 					<tr>
@@ -518,7 +528,7 @@ class TR_Family_Edit {
 				<?php endif; ?>
 
 				<h3><?php esc_html_e( 'Add child', 'tangnest-robotics' ); ?></h3>
-				<p class="description"><?php esc_html_e( 'Add as many children as needed, then save once.', 'tangnest-robotics' ); ?></p>
+				<p class="description"><?php esc_html_e( 'Add as many children as needed, then save once. They all share the family\'s package above.', 'tangnest-robotics' ); ?></p>
 				<table class="wp-list-table widefat fixed striped" id="tr-new-children-table">
 					<thead>
 						<tr>
@@ -526,7 +536,6 @@ class TR_Family_Edit {
 							<th><?php esc_html_e( 'Last name', 'tangnest-robotics' ); ?></th>
 							<th><?php esc_html_e( 'Date of birth', 'tangnest-robotics' ); ?></th>
 							<th><?php esc_html_e( 'School', 'tangnest-robotics' ); ?></th>
-							<th><?php esc_html_e( 'Program', 'tangnest-robotics' ); ?></th>
 							<th><?php esc_html_e( 'Enrolled on', 'tangnest-robotics' ); ?></th>
 							<th></th>
 						</tr>
@@ -541,50 +550,31 @@ class TR_Family_Edit {
 		</div>
 		<script>
 		(function() {
-			var programFees = <?php echo wp_json_encode( $program_fees ); ?>;
-			var programOptions = <?php echo wp_json_encode( array_map( static function ( $p ) {
-				return [ 'id' => (int) $p->id, 'label' => $p->name . ' (' . number_format( (float) $p->default_monthly_fee, 2 ) . ' RWF)' ];
-			}, $active_programs ) ); ?>;
+			var packageDetails = <?php echo wp_json_encode( $package_details ); ?>;
 			var postedChildren = <?php echo wp_json_encode( $posted_children ); ?>;
-			var baselineTotal = <?php echo wp_json_encode( (float) $calculated_now ); ?>;
-			var baselineCount = <?php echo wp_json_encode( (int) $active_children ); ?>;
 
-			var body       = document.getElementById( 'tr-new-children-body' );
-			var addBtn     = document.getElementById( 'tr-add-child' );
-			var customCb   = document.getElementById( 'tr-amount-custom' );
-			var customRow  = document.getElementById( 'tr-custom-amount-row' );
-			var workingEl  = document.getElementById( 'tr-calculated-working' );
-			var displayEl  = document.getElementById( 'tr-calculated-display' );
-			var customInput = document.getElementById( 'tr-custom-amount' );
-			var rowIndex   = 0;
+			var packageSelect  = document.getElementById( 'tr-package' );
+			var detailsEl      = document.getElementById( 'tr-package-details' );
+			var noPackageText  = <?php echo wp_json_encode( __( 'Select a package to see its price, duration and product code.', 'tangnest-robotics' ) ); ?>;
+			var detailsFormat  = <?php echo wp_json_encode( __( '%1$s RWF/month — %2$d months — code %3$s', 'tangnest-robotics' ) ); ?>;
+			var noCodeText     = <?php echo wp_json_encode( __( '(none)', 'tangnest-robotics' ) ); ?>;
 
-			function fmt( n ) {
-				return n.toLocaleString( 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 } );
-			}
-
-			function recompute() {
-				var total = baselineTotal;
-				var count = baselineCount;
-
-				body.querySelectorAll( 'select.tr-child-program' ).forEach( function( sel ) {
-					var fee = programFees[ sel.value ];
-					if ( fee !== undefined ) {
-						total += fee;
-						count += 1;
-					}
-				} );
-
-				if ( customCb.checked ) {
-					displayEl.textContent = fmt( parseFloat( customInput.value || '0' ) ) + ' RWF';
-					workingEl.style.display = 'none';
-				} else {
-					displayEl.textContent = fmt( total ) + ' RWF';
-					workingEl.style.display = '';
-					workingEl.textContent = count === 1
-						? ( '1 ' + <?php echo wp_json_encode( __( 'child', 'tangnest-robotics' ) ); ?> + ' — ' + fmt( total ) + ' RWF ' + <?php echo wp_json_encode( __( 'calculated', 'tangnest-robotics' ) ); ?> )
-						: ( count + ' ' + <?php echo wp_json_encode( __( 'children', 'tangnest-robotics' ) ); ?> + ' — ' + fmt( total ) + ' RWF ' + <?php echo wp_json_encode( __( 'calculated', 'tangnest-robotics' ) ); ?> );
+			function updatePackageDetails() {
+				var detail = packageDetails[ packageSelect.value ];
+				if ( ! detail ) {
+					detailsEl.textContent = noPackageText;
+					return;
 				}
+				detailsEl.textContent = detailsFormat
+					.replace( '%1$s', detail.amount )
+					.replace( '%2$d', detail.duration )
+					.replace( '%3$s', detail.code || noCodeText );
 			}
+			packageSelect.addEventListener( 'change', updatePackageDetails );
+
+			var body     = document.getElementById( 'tr-new-children-body' );
+			var addBtn   = document.getElementById( 'tr-add-child' );
+			var rowIndex = 0;
 
 			function escHtml( s ) {
 				return String( s === undefined || s === null ? '' : s )
@@ -603,39 +593,22 @@ class TR_Family_Edit {
 					return '<input type="' + type + '" name="new_children[' + idx + '][' + name + ']" value="' + escHtml( value ) + '">';
 				}
 
-				var optionsHtml = '<option value="0"><?php echo esc_js( __( '— Select program —', 'tangnest-robotics' ) ); ?></option>';
-				programOptions.forEach( function( p ) {
-					var selected = String( p.id ) === String( data.program_id || '' ) ? ' selected' : '';
-					optionsHtml += '<option value="' + p.id + '"' + selected + '>' + escHtml( p.label ) + '</option>';
-				} );
-
 				tr.innerHTML =
 					'<td>' + field( 'text', 'first_name', data.first_name ) + '</td>' +
 					'<td>' + field( 'text', 'last_name', data.last_name ) + '</td>' +
 					'<td>' + field( 'date', 'date_of_birth', data.date_of_birth ) + '</td>' +
 					'<td>' + field( 'text', 'school', data.school ) + '</td>' +
-					'<td><select class="tr-child-program" name="new_children[' + idx + '][program_id]">' + optionsHtml + '</select></td>' +
 					'<td>' + field( 'date', 'enrolled_on', data.enrolled_on || <?php echo wp_json_encode( gmdate( 'Y-m-d' ) ); ?> ) + '</td>' +
 					'<td><button type="button" class="button-link tr-remove-child"><?php echo esc_js( __( 'Remove', 'tangnest-robotics' ) ); ?></button></td>';
 
 				body.appendChild( tr );
 
-				tr.querySelector( '.tr-child-program' ).addEventListener( 'change', recompute );
 				tr.querySelector( '.tr-remove-child' ).addEventListener( 'click', function() {
 					tr.parentNode.removeChild( tr );
-					recompute();
 				} );
-
-				recompute();
 			}
 
 			addBtn.addEventListener( 'click', function() { addChildRow(); } );
-
-			customCb.addEventListener( 'change', function() {
-				customRow.style.display = customCb.checked ? '' : 'none';
-				recompute();
-			} );
-			customInput.addEventListener( 'input', recompute );
 
 			postedChildren.forEach( function( row ) { addChildRow( row ); } );
 
@@ -660,24 +633,9 @@ class TR_Family_Edit {
 				radio.addEventListener( 'change', toggleParentFields );
 			} );
 			toggleParentFields();
-
-			recompute();
 		})();
 		</script>
 		<?php
-	}
-
-	private static function working_text( int $count, float $total ): string {
-		if ( 0 === $count ) {
-			return __( 'No active children yet.', 'tangnest-robotics' );
-		}
-
-		return sprintf(
-			/* translators: 1: number of active children, 2: calculated total */
-			_n( '%1$d child — %2$s RWF calculated', '%1$d children — %2$s RWF calculated', $count, 'tangnest-robotics' ),
-			$count,
-			number_format( $total, 2 )
-		);
 	}
 
 	private static function render_students_sublist( int $family_id ): void {
@@ -687,8 +645,8 @@ class TR_Family_Edit {
 			<thead>
 				<tr>
 					<th><?php esc_html_e( 'Name', 'tangnest-robotics' ); ?></th>
-					<th><?php esc_html_e( 'Program', 'tangnest-robotics' ); ?></th>
-					<th><?php esc_html_e( 'Progress', 'tangnest-robotics' ); ?></th>
+					<th><?php esc_html_e( 'Date of birth', 'tangnest-robotics' ); ?></th>
+					<th><?php esc_html_e( 'School', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Status', 'tangnest-robotics' ); ?></th>
 				</tr>
 			</thead>
@@ -697,15 +655,10 @@ class TR_Family_Edit {
 					<tr><td colspan="4"><?php esc_html_e( 'No students yet.', 'tangnest-robotics' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $students as $student ) : ?>
-						<?php
-						$enrollments = TR_Enrollments::get_by_student( (int) $student->id );
-						$enrollment  = $enrollments[0] ?? null;
-						$program     = $enrollment ? TR_Programs::get( (int) $enrollment->program_id ) : null;
-						?>
 						<tr>
 							<td><?php echo esc_html( trim( $student->first_name . ' ' . $student->last_name ) ); ?></td>
-							<td><?php echo esc_html( $program->name ?? '—' ); ?></td>
-							<td><?php echo esc_html( $enrollment ? TR_Enrollments::progress_label( $enrollment ) : '—' ); ?></td>
+							<td><?php echo esc_html( $student->date_of_birth ?? '—' ); ?></td>
+							<td><?php echo esc_html( $student->school ?? '—' ); ?></td>
 							<td><?php echo esc_html( ucfirst( $student->status ) ); ?></td>
 						</tr>
 					<?php endforeach; ?>

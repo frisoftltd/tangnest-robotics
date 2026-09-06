@@ -2,10 +2,10 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
- * Student add/edit form. Combines the student record and its single live
- * enrollment on one screen. months_total is copied from the chosen
- * program at save time and never retroactively updated by later program
- * edits.
+ * Student add/edit form. A child is just a person attached to a family
+ * now (v0.8.0) — no program, no enrollment date, no fee. Pricing,
+ * duration and progress all live on the family's package instead; see
+ * TR_Family_Edit for where those are actually set.
  */
 class TR_Student_Edit {
 	const NONCE = 'tr_student_save';
@@ -78,18 +78,6 @@ class TR_Student_Edit {
 		$school = isset( $_POST['school'] ) ? sanitize_text_field( wp_unslash( $_POST['school'] ) ) : '';
 		$notes  = isset( $_POST['notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['notes'] ) ) : '';
 
-		$program_id = isset( $_POST['program_id'] ) ? absint( $_POST['program_id'] ) : 0;
-		$program    = $program_id > 0 ? TR_Programs::get( $program_id ) : null;
-		if ( null === $program ) {
-			$errors[] = __( 'Please select a program.', 'tangnest-robotics' );
-		}
-
-		$enrolled_on = isset( $_POST['enrolled_on'] ) ? sanitize_text_field( wp_unslash( $_POST['enrolled_on'] ) ) : '';
-		$dt          = DateTime::createFromFormat( 'Y-m-d', $enrolled_on );
-		if ( ! $dt || $dt->format( 'Y-m-d' ) !== $enrolled_on ) {
-			$errors[] = __( 'Enrollment date is not a valid date.', 'tangnest-robotics' );
-		}
-
 		if ( ! empty( $errors ) ) {
 			set_transient( self::state_key(), [ 'errors' => $errors, 'values' => wp_unslash( $_POST ) ], MINUTE_IN_SECONDS );
 			wp_safe_redirect( self::edit_url( $student_id ) );
@@ -118,6 +106,8 @@ class TR_Student_Edit {
 			update_user_meta( $user_id, 'parent_name', $user->display_name );
 			update_user_meta( $user_id, 'parent_email', $user->user_email );
 
+			// No package yet — the admin picks one on the Family screen
+			// afterward (prompted by the "family has no package" notice).
 			$family_id = TR_Families::insert( [
 				'parent_user_id' => $user_id,
 				'monthly_amount' => 0,
@@ -144,28 +134,6 @@ class TR_Student_Edit {
 		} else {
 			$student_id = TR_Students::insert( $student_data );
 		}
-
-		$enrollment_id       = isset( $_POST['enrollment_id'] ) ? absint( $_POST['enrollment_id'] ) : 0;
-		$existing_enrollment = $enrollment_id > 0 ? TR_Enrollments::get( $enrollment_id ) : null;
-		$months_paid          = $existing_enrollment ? (int) $existing_enrollment->months_paid : 0;
-		$enrollment_status    = $existing_enrollment ? $existing_enrollment->status : 'active';
-
-		$enrollment_data = [
-			'program_id'   => $program_id,
-			'enrolled_on'  => $enrolled_on,
-			'months_total' => (int) $program->duration_months,
-			'months_paid'  => $months_paid,
-			'status'       => $enrollment_status,
-		];
-
-		if ( $existing_enrollment ) {
-			TR_Enrollments::update( $enrollment_id, $enrollment_data );
-		} else {
-			TR_Enrollments::insert( $enrollment_data + [ 'student_id' => $student_id ] );
-		}
-
-		TR_Families::set_billing_anchor( $family_id, $enrolled_on );
-		TR_Families::recalculate_amount( $family_id );
 
 		if ( 'new' === $family_mode ) {
 			TR_Notifications::maybe_send_welcome_email( $user_id, $family_id );
@@ -211,11 +179,6 @@ class TR_Student_Edit {
 
 		$student_id = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
 		$student    = $student_id > 0 ? TR_Students::get( $student_id ) : null;
-		$enrollment = null;
-		if ( $student ) {
-			$enrollments = TR_Enrollments::get_by_student( $student_id );
-			$enrollment  = $enrollments[0] ?? null;
-		}
 
 		$state = get_transient( self::state_key() );
 		if ( $state ) {
@@ -226,11 +189,8 @@ class TR_Student_Edit {
 
 		$family_mode = $posted['family_mode'] ?? 'existing';
 		$families    = TR_Families::get_list( [ 'per_page' => 200 ] );
-		$programs    = TR_Programs::get_list( [ 'status' => 'active', 'per_page' => 200 ] );
 
 		$selected_family_id = isset( $posted['family_id'] ) ? absint( $posted['family_id'] ) : ( $student->family_id ?? 0 );
-		$selected_program_id = isset( $posted['program_id'] ) ? absint( $posted['program_id'] ) : ( $enrollment->program_id ?? 0 );
-		$enrolled_on          = $posted['enrolled_on'] ?? ( $enrollment->enrolled_on ?? gmdate( 'Y-m-d' ) );
 		?>
 		<div class="wrap tr-admin-wrap">
 			<h1><?php echo $student ? esc_html__( 'Edit Student', 'tangnest-robotics' ) : esc_html__( 'Add Student', 'tangnest-robotics' ); ?></h1>
@@ -248,7 +208,6 @@ class TR_Student_Edit {
 			<form method="post">
 				<?php wp_nonce_field( self::NONCE, 'tr_student_nonce' ); ?>
 				<input type="hidden" name="student_id" value="<?php echo esc_attr( $student->id ?? 0 ); ?>">
-				<input type="hidden" name="enrollment_id" value="<?php echo esc_attr( $enrollment->id ?? 0 ); ?>">
 
 				<table class="form-table" role="presentation">
 					<tr>
@@ -287,6 +246,7 @@ class TR_Student_Edit {
 									<td><input type="text" id="tr-new-phone" name="new_phone" placeholder="07XXXXXXXX" value="<?php echo esc_attr( $posted['new_phone'] ?? '' ); ?>"></td>
 								</tr>
 							</table>
+							<p class="description"><?php esc_html_e( 'A new family has no package yet — assign one on the Families screen afterward so it can be billed.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -304,21 +264,6 @@ class TR_Student_Edit {
 					<tr>
 						<th><label for="tr-school"><?php esc_html_e( 'School', 'tangnest-robotics' ); ?></label></th>
 						<td><input type="text" id="tr-school" name="school" class="regular-text" value="<?php echo esc_attr( $posted['school'] ?? ( $student->school ?? '' ) ); ?>"></td>
-					</tr>
-					<tr>
-						<th><label for="tr-program"><?php esc_html_e( 'Program', 'tangnest-robotics' ); ?></label></th>
-						<td>
-							<select id="tr-program" name="program_id" required>
-								<option value="0"><?php esc_html_e( '— Select program —', 'tangnest-robotics' ); ?></option>
-								<?php foreach ( $programs as $program ) : ?>
-									<option value="<?php echo esc_attr( $program->id ); ?>" <?php selected( $selected_program_id, (int) $program->id ); ?>><?php echo esc_html( $program->name . ' (' . $program->duration_months . ' mo)' ); ?></option>
-								<?php endforeach; ?>
-							</select>
-						</td>
-					</tr>
-					<tr>
-						<th><label for="tr-enrolled-on"><?php esc_html_e( 'Enrollment date', 'tangnest-robotics' ); ?></label></th>
-						<td><input type="date" id="tr-enrolled-on" name="enrolled_on" required value="<?php echo esc_attr( $enrolled_on ); ?>"></td>
 					</tr>
 					<tr>
 						<th><label for="tr-notes"><?php esc_html_e( 'Notes', 'tangnest-robotics' ); ?></label></th>

@@ -22,8 +22,13 @@ class TR_Invoice_Generator {
 		foreach ( $families as $family ) {
 			$family_id = (int) $family->id;
 
-			$active_enrollments = TR_Enrollments::get_active_by_family( $family_id );
-			if ( empty( $active_enrollments ) ) {
+			if ( empty( $family->package_id ) ) {
+				TR_Logger::warning( 'Invoice generation skipped: family has no package', [ 'family_id' => $family_id ] );
+				continue;
+			}
+
+			$active_students = TR_Students::get_list( [ 'family_id' => $family_id, 'status' => 'active', 'per_page' => 200 ] );
+			if ( empty( $active_students ) ) {
 				continue;
 			}
 
@@ -49,7 +54,7 @@ class TR_Invoice_Generator {
 				'status'           => 'pending',
 				'due_date'         => $today_str,
 				'issued_at'        => current_time( 'mysql' ),
-				'student_snapshot' => self::build_student_snapshot( $active_enrollments ),
+				'student_snapshot' => self::build_student_snapshot( $family, $active_students ),
 			] );
 
 			if ( $invoice_id <= 0 ) {
@@ -106,19 +111,30 @@ class TR_Invoice_Generator {
 		return $day_of_month === $last_day_of_month && $last_day_of_month < $billing_day;
 	}
 
-	private static function build_student_snapshot( array $enrollments ): array {
+	/**
+	 * Shared by the daily generator and the admin "Create invoice" action —
+	 * one place that knows how to build the frozen-at-issue-time snapshot
+	 * an invoice email reads later. Every row carries the same family-level
+	 * package name and progress figures (v0.8.0: siblings finish together,
+	 * so there is one figure to show, not one per child); $active_students
+	 * is accepted rather than re-queried so a caller that already has the
+	 * list (the daily loop) doesn't fetch it twice.
+	 */
+	public static function build_student_snapshot( object $family, ?array $active_students = null ): array {
+		if ( null === $active_students ) {
+			$active_students = TR_Students::get_list( [ 'family_id' => (int) $family->id, 'status' => 'active', 'per_page' => 200 ] );
+		}
+
+		$package      = ! empty( $family->package_id ) ? TR_Programs::get( (int) $family->package_id ) : null;
+		$package_name = $package->name ?? '';
+		$months_total = $package ? max( (int) $package->duration_months, 1 ) : 1;
+		$month_number = min( (int) $family->months_paid + 1, $months_total );
+
 		$snapshot = [];
-
-		foreach ( $enrollments as $enrollment ) {
-			$student = TR_Students::get( (int) $enrollment->student_id );
-			$program = TR_Programs::get( (int) $enrollment->program_id );
-
-			$months_total = max( (int) $enrollment->months_total, 1 );
-			$month_number = min( (int) $enrollment->months_paid + 1, $months_total );
-
+		foreach ( $active_students as $student ) {
 			$snapshot[] = [
-				'student_name' => $student ? trim( $student->first_name . ' ' . $student->last_name ) : '',
-				'program_name' => $program->name ?? '',
+				'student_name' => trim( $student->first_name . ' ' . $student->last_name ),
+				'package_name' => $package_name,
 				'month_number' => $month_number,
 				'months_total' => $months_total,
 			];

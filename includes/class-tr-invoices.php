@@ -251,6 +251,22 @@ class TR_Invoices {
 		return false !== $wpdb->query( $sql );
 	}
 
+	/**
+	 * Part of TR_Families::delete_with_dependents() — the caller has
+	 * already refused the whole deletion if any invoice for this family is
+	 * 'paid', so this only ever removes pending/overdue/cancelled/waived
+	 * rows; a paid invoice is the financial record and is never touched.
+	 */
+	public static function delete_non_paid_by_family( int $family_id ): void {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"DELETE FROM " . self::table() . " WHERE family_id = %d AND status != %s",
+			[ $family_id, 'paid' ]
+		);
+		$wpdb->query( $sql );
+	}
+
 	public static function mark_overdue_due_before( string $date ): int {
 		global $wpdb;
 

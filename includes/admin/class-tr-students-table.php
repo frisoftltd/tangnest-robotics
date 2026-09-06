@@ -6,8 +6,9 @@ if ( ! class_exists( 'WP_List_Table' ) ) {
 }
 
 /**
- * Students list, joined to each student's most recent enrollment (a student
- * is expected to carry one live enrollment at a time in this pass).
+ * Students list. A child no longer carries its own program or progress
+ * (v0.8.0) — both live on the family's package now, since siblings finish
+ * together, so this table reads them from the family, not an enrollment.
  */
 class TR_Students_Table extends WP_List_Table {
 
@@ -23,9 +24,8 @@ class TR_Students_Table extends WP_List_Table {
 		return [
 			'student_name' => __( 'Student', 'tangnest-robotics' ),
 			'family'       => __( 'Family', 'tangnest-robotics' ),
-			'program'      => __( 'Program', 'tangnest-robotics' ),
+			'package'      => __( 'Package', 'tangnest-robotics' ),
 			'progress'     => __( 'Progress', 'tangnest-robotics' ),
-			'enrolled_on'  => __( 'Enrolled', 'tangnest-robotics' ),
 			'status'       => __( 'Status', 'tangnest-robotics' ),
 		];
 	}
@@ -33,24 +33,16 @@ class TR_Students_Table extends WP_List_Table {
 	protected function get_sortable_columns(): array {
 		return [
 			'student_name' => [ 'first_name', false ],
-			'enrolled_on'  => [ 'enrolled_on', false ],
 			'status'       => [ 'status', false ],
 		];
 	}
 
 	private function base_from(): string {
-		$students    = TR_DB::table_students();
-		$enrollments = TR_DB::table_enrollments();
-		$programs    = TR_DB::table_programs();
-		$families    = TR_DB::table_families();
+		$students = TR_DB::table_students();
+		$families = TR_DB::table_families();
 		global $wpdb;
 
 		return "FROM {$students} s
-				LEFT JOIN (
-					SELECT e1.* FROM {$enrollments} e1
-					INNER JOIN ( SELECT student_id, MAX(id) AS max_id FROM {$enrollments} GROUP BY student_id ) le ON le.max_id = e1.id
-				) e ON e.student_id = s.id
-				LEFT JOIN {$programs} p ON p.id = e.program_id
 				LEFT JOIN {$families} f ON f.id = s.family_id
 				LEFT JOIN {$wpdb->users} u ON u.ID = f.parent_user_id";
 	}
@@ -62,26 +54,21 @@ class TR_Students_Table extends WP_List_Table {
 		$base_url = admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_STUDENTS );
 		$from     = $this->base_from();
 
-		$counts = [
-			''          => (int) $wpdb->get_var( "SELECT COUNT(*) {$from}" ),
-			'active'    => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) {$from} WHERE e.status = %s", [ 'active' ] ) ),
-			'completed' => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) {$from} WHERE e.status = %s", [ 'completed' ] ) ),
-			'withdrawn' => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) {$from} WHERE e.status = %s", [ 'withdrawn' ] ) ),
-		];
-
-		$labels = [
-			''          => __( 'All', 'tangnest-robotics' ),
-			'active'    => __( 'Active', 'tangnest-robotics' ),
-			'completed' => __( 'Completed', 'tangnest-robotics' ),
-			'withdrawn' => __( 'Withdrawn', 'tangnest-robotics' ),
-		];
+		$labels = [ '' => __( 'All', 'tangnest-robotics' ) ];
+		foreach ( TR_Students::STATUSES as $status_value ) {
+			$labels[ $status_value ] = ucfirst( $status_value );
+		}
 
 		$out = [];
 		foreach ( $labels as $status_value => $label ) {
+			$count = '' === $status_value
+				? (int) $wpdb->get_var( "SELECT COUNT(*) {$from}" )
+				: (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) {$from} WHERE s.status = %s", [ $status_value ] ) );
+
 			$url   = '' === $status_value ? $base_url : add_query_arg( 'status', $status_value, $base_url );
 			$class = $current === $status_value ? ' class="current"' : '';
 			$key   = '' === $status_value ? 'all' : $status_value;
-			$out[ $key ] = sprintf( '<a href="%s"%s>%s <span class="count">(%d)</span></a>', esc_url( $url ), $class, esc_html( $label ), $counts[ $status_value ] );
+			$out[ $key ] = sprintf( '<a href="%s"%s>%s <span class="count">(%d)</span></a>', esc_url( $url ), $class, esc_html( $label ), $count );
 		}
 
 		return $out;
@@ -92,15 +79,15 @@ class TR_Students_Table extends WP_List_Table {
 			return;
 		}
 
-		$programs        = TR_Programs::get_list( [ 'per_page' => 200 ] );
-		$selected_program = isset( $_REQUEST['program_id'] ) ? absint( $_REQUEST['program_id'] ) : 0;
+		$packages         = TR_Programs::get_list( [ 'per_page' => 200 ] );
+		$selected_package = isset( $_REQUEST['package_id'] ) ? absint( $_REQUEST['package_id'] ) : 0;
 		?>
 		<div class="alignleft actions">
-			<label class="screen-reader-text" for="tr-filter-program"><?php esc_html_e( 'Filter by program', 'tangnest-robotics' ); ?></label>
-			<select name="program_id" id="tr-filter-program">
-				<option value="0"><?php esc_html_e( 'All programs', 'tangnest-robotics' ); ?></option>
-				<?php foreach ( $programs as $program ) : ?>
-					<option value="<?php echo esc_attr( $program->id ); ?>" <?php selected( $selected_program, (int) $program->id ); ?>><?php echo esc_html( $program->name ); ?></option>
+			<label class="screen-reader-text" for="tr-filter-package"><?php esc_html_e( 'Filter by package', 'tangnest-robotics' ); ?></label>
+			<select name="package_id" id="tr-filter-package">
+				<option value="0"><?php esc_html_e( 'All packages', 'tangnest-robotics' ); ?></option>
+				<?php foreach ( $packages as $package ) : ?>
+					<option value="<?php echo esc_attr( $package->id ); ?>" <?php selected( $selected_package, (int) $package->id ); ?>><?php echo esc_html( $package->name ); ?></option>
 				<?php endforeach; ?>
 			</select>
 			<?php submit_button( __( 'Filter', 'tangnest-robotics' ), '', 'filter_action', false ); ?>
@@ -114,13 +101,12 @@ class TR_Students_Table extends WP_List_Table {
 		$per_page     = 20;
 		$current_page = $this->get_pagenum();
 		$status       = isset( $_REQUEST['status'] ) ? sanitize_key( wp_unslash( $_REQUEST['status'] ) ) : '';
-		$program_id   = isset( $_REQUEST['program_id'] ) ? absint( $_REQUEST['program_id'] ) : 0;
+		$package_id   = isset( $_REQUEST['package_id'] ) ? absint( $_REQUEST['package_id'] ) : 0;
 		$search       = isset( $_REQUEST['s'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['s'] ) ) : '';
 
 		$orderby_map = [
-			'first_name'  => 's.first_name',
-			'enrolled_on' => 'e.enrolled_on',
-			'status'      => 'e.status',
+			'first_name' => 's.first_name',
+			'status'     => 's.status',
 		];
 		$orderby_key = isset( $_REQUEST['orderby'] ) ? sanitize_key( wp_unslash( $_REQUEST['orderby'] ) ) : '';
 		$orderby     = $orderby_map[ $orderby_key ] ?? 's.first_name';
@@ -129,14 +115,14 @@ class TR_Students_Table extends WP_List_Table {
 		$where  = [ '1=1' ];
 		$params = [];
 
-		if ( in_array( $status, [ 'active', 'completed', 'withdrawn' ], true ) ) {
-			$where[]  = 'e.status = %s';
+		if ( in_array( $status, TR_Students::STATUSES, true ) ) {
+			$where[]  = 's.status = %s';
 			$params[] = $status;
 		}
 
-		if ( $program_id > 0 ) {
-			$where[]  = 'e.program_id = %d';
-			$params[] = $program_id;
+		if ( $package_id > 0 ) {
+			$where[]  = 'f.package_id = %d';
+			$params[] = $package_id;
 		}
 
 		if ( '' !== $search ) {
@@ -152,13 +138,12 @@ class TR_Students_Table extends WP_List_Table {
 
 		$total = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) {$from} WHERE {$where_sql}", $params ) );
 
-		$offset         = ( max( 1, $current_page ) - 1 ) * $per_page;
+		$offset          = ( max( 1, $current_page ) - 1 ) * $per_page;
 		$select_params   = $params;
 		$select_params[] = $per_page;
 		$select_params[] = $offset;
 
-		$sql = "SELECT s.*, e.id AS enrollment_id, e.program_id, e.months_total, e.months_paid, e.enrolled_on, e.status AS enrollment_status,
-					p.name AS program_name, f.id AS family_id, u.display_name AS parent_name
+		$sql = "SELECT s.*, f.id AS family_id, f.package_id, f.months_paid, f.status AS family_status, u.display_name AS parent_name
 				{$from}
 				WHERE {$where_sql}
 				ORDER BY {$orderby} {$order}
@@ -174,23 +159,35 @@ class TR_Students_Table extends WP_List_Table {
 		] );
 	}
 
+	/**
+	 * Reconstructs the bits of a family row TR_Families::progress_label()
+	 * needs, from the columns already selected in prepare_items() — avoids
+	 * a second query per row just to call a method that only reads three
+	 * fields.
+	 */
+	private function family_progress_stub( object $item ): object {
+		return (object) [
+			'status'      => $item->family_status,
+			'package_id'  => $item->package_id,
+			'months_paid' => $item->months_paid,
+		];
+	}
+
 	public function column_default( $item, $column_name ) {
 		switch ( $column_name ) {
-			case 'program':
-				return esc_html( $item->program_name ?? '—' );
-			case 'progress':
-				if ( null === $item->enrollment_id ) {
+			case 'package':
+				if ( empty( $item->package_id ) ) {
 					return '—';
 				}
-				return esc_html( TR_Enrollments::progress_label( (object) [
-					'status'       => $item->enrollment_status,
-					'months_paid'  => $item->months_paid,
-					'months_total' => $item->months_total,
-				] ) );
-			case 'enrolled_on':
-				return esc_html( $item->enrolled_on ?? '—' );
+				$package = TR_Programs::get( (int) $item->package_id );
+				return esc_html( $package->name ?? __( '(deleted)', 'tangnest-robotics' ) );
+			case 'progress':
+				if ( empty( $item->family_id ) ) {
+					return '—';
+				}
+				return esc_html( TR_Families::progress_label( $this->family_progress_stub( $item ) ) );
 			case 'status':
-				return esc_html( $item->enrollment_status ? ucfirst( $item->enrollment_status ) : ucfirst( $item->status ) );
+				return esc_html( ucfirst( $item->status ) );
 			default:
 				return '';
 		}
@@ -206,7 +203,7 @@ class TR_Students_Table extends WP_List_Table {
 			'edit' => sprintf( '<a href="%s">%s</a>', esc_url( $edit_url ), esc_html__( 'Edit', 'tangnest-robotics' ) ),
 		];
 
-		if ( 'active' === $item->enrollment_status ) {
+		if ( 'active' === $item->status ) {
 			$withdraw_url = wp_nonce_url(
 				add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_STUDENTS, 'tr_row_action' => 'withdraw', 'id' => $item->id ], admin_url( 'admin.php' ) ),
 				'tr_student_row_action_' . $item->id
@@ -217,7 +214,7 @@ class TR_Students_Table extends WP_List_Table {
 				esc_js( __( 'Withdraw this student?', 'tangnest-robotics' ) ),
 				esc_html__( 'Withdraw', 'tangnest-robotics' )
 			);
-		} elseif ( 'withdrawn' === $item->enrollment_status ) {
+		} elseif ( 'withdrawn' === $item->status ) {
 			$reactivate_url = wp_nonce_url(
 				add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_STUDENTS, 'tr_row_action' => 'reactivate', 'id' => $item->id ], admin_url( 'admin.php' ) ),
 				'tr_student_row_action_' . $item->id

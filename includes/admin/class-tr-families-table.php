@@ -25,7 +25,9 @@ class TR_Families_Table extends WP_List_Table {
 			'email'            => __( 'Email', 'tangnest-robotics' ),
 			'phone'            => __( 'Phone', 'tangnest-robotics' ),
 			'active_students'  => __( 'Active Students', 'tangnest-robotics' ),
+			'package'          => __( 'Package', 'tangnest-robotics' ),
 			'monthly_amount'   => __( 'Monthly Amount', 'tangnest-robotics' ),
+			'progress'         => __( 'Progress', 'tangnest-robotics' ),
 			'billing_day'      => __( 'Billing Day', 'tangnest-robotics' ),
 			'next_billing'     => __( 'Next Billing Date', 'tangnest-robotics' ),
 			'balance'          => __( 'Balance', 'tangnest-robotics' ),
@@ -53,9 +55,10 @@ class TR_Families_Table extends WP_List_Table {
 		$base_url = admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_FAMILIES );
 
 		$views = [
-			'all'      => [ '', __( 'All', 'tangnest-robotics' ), TR_Families::count() ],
-			'active'   => [ 'active', __( 'Active', 'tangnest-robotics' ), TR_Families::count( [ 'status' => 'active' ] ) ],
-			'inactive' => [ 'inactive', __( 'Inactive', 'tangnest-robotics' ), TR_Families::count( [ 'status' => 'inactive' ] ) ],
+			'all'       => [ '', __( 'All', 'tangnest-robotics' ), TR_Families::count() ],
+			'active'    => [ 'active', __( 'Active', 'tangnest-robotics' ), TR_Families::count( [ 'status' => 'active' ] ) ],
+			'completed' => [ 'completed', __( 'Completed', 'tangnest-robotics' ), TR_Families::count( [ 'status' => 'completed' ] ) ],
+			'inactive'  => [ 'inactive', __( 'Inactive', 'tangnest-robotics' ), TR_Families::count( [ 'status' => 'inactive' ] ) ],
 		];
 
 		$out = [];
@@ -91,7 +94,7 @@ class TR_Families_Table extends WP_List_Table {
 		$where  = [ '1=1' ];
 		$params = [];
 
-		if ( in_array( $status, [ 'active', 'inactive' ], true ) ) {
+		if ( in_array( $status, TR_Families::STATUSES, true ) ) {
 			$where[]  = 'f.status = %s';
 			$params[] = $status;
 		}
@@ -140,8 +143,16 @@ class TR_Families_Table extends WP_List_Table {
 				return esc_html( $item->phone ?? '' );
 			case 'active_students':
 				return esc_html( (string) $item->active_students );
+			case 'package':
+				if ( empty( $item->package_id ) ) {
+					return '<span class="tr-warning-flag">' . esc_html__( '⚠ No package', 'tangnest-robotics' ) . '</span>';
+				}
+				$package = TR_Programs::get( (int) $item->package_id );
+				return esc_html( $package->name ?? __( '(deleted)', 'tangnest-robotics' ) );
 			case 'monthly_amount':
-				return esc_html( $item->monthly_amount ) . ' RWF' . ( ! empty( $item->amount_is_custom ) ? ' <span class="tr-invoice-meta">(' . esc_html__( 'custom', 'tangnest-robotics' ) . ')</span>' : '' );
+				return esc_html( $item->monthly_amount ) . ' RWF';
+			case 'progress':
+				return esc_html( TR_Families::progress_label( $item ) );
 			case 'billing_day':
 				return (int) $item->billing_day > 0 ? esc_html( (string) (int) $item->billing_day ) : esc_html__( 'Not set', 'tangnest-robotics' );
 			case 'next_billing':
@@ -198,6 +209,17 @@ class TR_Families_Table extends WP_List_Table {
 			'<a href="%s">%s</a>',
 			esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'action' => 'create_invoice', 'id' => $item->id ], admin_url( 'admin.php' ) ) ),
 			esc_html__( 'Create invoice', 'tangnest-robotics' )
+		);
+
+		$actions['delete'] = sprintf(
+			'<a href="%s" onclick="return confirm(\'%s\');">%s</a>',
+			esc_url( $this->row_action_url( $item->id, 'delete' ) ),
+			esc_js( sprintf(
+				/* translators: %s: parent name */
+				__( 'Permanently delete the family for %s, including their children? This cannot be undone. Families with a paid invoice cannot be deleted.', 'tangnest-robotics' ),
+				$name
+			) ),
+			esc_html__( 'Delete', 'tangnest-robotics' )
 		);
 
 		return sprintf( '<a href="%s"><strong>%s</strong></a>%s', esc_url( $edit_url ), esc_html( $name ), $this->render_actions_html( $actions ) );

@@ -2,10 +2,13 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
- * Thin $wpdb wrapper over wp_tr_programs. default_monthly_fee is the real
- * price (v0.6.0) — a family's monthly_amount is the sum of its active
- * children's program fees, calculated by TR_Families::calculate_amount(),
- * unless the family has a bundle override in place.
+ * Thin $wpdb wrapper over wp_tr_programs — the packages table (v0.8.0).
+ * Each row is one of Tangnest's IremboPay-priced packages: a course at a
+ * specific family-size tier. default_monthly_fee, irembopay_product_code
+ * and duration_months are the real price/code/length; a family selects
+ * one package and TR_Family_Edit snapshots that fee into the family's own
+ * monthly_amount at save time, so a later price change here never
+ * retroactively alters an existing family's billing.
  */
 class TR_Programs {
 	const STATUSES = [ 'active', 'inactive' ];
@@ -19,14 +22,15 @@ class TR_Programs {
 		$now = current_time( 'mysql' );
 
 		$sql = $wpdb->prepare(
-			"INSERT INTO " . self::table() . " (name, duration_months, default_monthly_fee, irembopay_product_code, start_date, status, created_at, updated_at)
-			 VALUES (%s, %d, %s, %s, %s, %s, %s, %s)",
+			"INSERT INTO " . self::table() . " (name, duration_months, default_monthly_fee, irembopay_product_code, start_date, notes, status, created_at, updated_at)
+			 VALUES (%s, %d, %s, %s, %s, %s, %s, %s, %s)",
 			[
 				sanitize_text_field( $data['name'] ),
 				absint( $data['duration_months'] ),
 				number_format( (float) ( $data['default_monthly_fee'] ?? 0 ), 2, '.', '' ),
 				( $data['irembopay_product_code'] ?? '' ) !== '' ? sanitize_text_field( $data['irembopay_product_code'] ) : null,
 				( $data['start_date'] ?? '' ) !== '' ? $data['start_date'] : null,
+				( $data['notes'] ?? '' ) !== '' ? sanitize_textarea_field( $data['notes'] ) : null,
 				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
 				$now,
 				$now,
@@ -42,13 +46,14 @@ class TR_Programs {
 		$now = current_time( 'mysql' );
 
 		$sql = $wpdb->prepare(
-			"UPDATE " . self::table() . " SET name = %s, duration_months = %d, default_monthly_fee = %s, irembopay_product_code = %s, start_date = %s, status = %s, updated_at = %s WHERE id = %d",
+			"UPDATE " . self::table() . " SET name = %s, duration_months = %d, default_monthly_fee = %s, irembopay_product_code = %s, start_date = %s, notes = %s, status = %s, updated_at = %s WHERE id = %d",
 			[
 				sanitize_text_field( $data['name'] ),
 				absint( $data['duration_months'] ),
 				number_format( (float) ( $data['default_monthly_fee'] ?? 0 ), 2, '.', '' ),
 				( $data['irembopay_product_code'] ?? '' ) !== '' ? sanitize_text_field( $data['irembopay_product_code'] ) : null,
 				( $data['start_date'] ?? '' ) !== '' ? $data['start_date'] : null,
+				( $data['notes'] ?? '' ) !== '' ? sanitize_textarea_field( $data['notes'] ) : null,
 				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
 				$now,
 				$id,
@@ -56,6 +61,23 @@ class TR_Programs {
 		);
 
 		return false !== $wpdb->query( $sql );
+	}
+
+	/**
+	 * Refused by the caller (TR_Packages_Page) whenever family_count() is
+	 * non-zero — this method itself does not re-check, same as every other
+	 * delete primitive in this codebase leaves its precondition to the
+	 * caller. Archiving (status = inactive) is the recommended action for
+	 * a package that already has families on it.
+	 */
+	public static function delete( int $id ): bool {
+		global $wpdb;
+
+		return false !== $wpdb->query( $wpdb->prepare( "DELETE FROM " . self::table() . " WHERE id = %d", [ $id ] ) );
+	}
+
+	public static function family_count( int $id ): int {
+		return TR_Families::count( [ 'package_id' => $id ] );
 	}
 
 	public static function get( int $id ): ?object {

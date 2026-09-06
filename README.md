@@ -17,6 +17,13 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.8.0
+- Changed: Families now select a single package that sets their price, product code and duration
+- Changed: Programs renamed to Packages, with a notes field for distinguishing price tiers
+- Removed: Per-child program fees and the custom family bundle override
+- Changed: Course progress is now tracked per family, since siblings finish together
+- New: Delete actions for packages and families, blocked where records depend on them
+
 ### v0.7.1
 - Fix: IremboPay payments were never marked paid — the merchant account's one callback URL is owned by the WooCommerce IremboPay plugin and cannot be changed, so our webhook never arrived
 - New: intercepts that shared webhook route, claims only payloads matching one of our own invoices, and leaves everything else completely untouched for the WooCommerce plugin — LMS course payments are unaffected

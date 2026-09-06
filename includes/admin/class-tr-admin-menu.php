@@ -11,7 +11,7 @@ class TR_Admin_Menu {
 
 	const PAGE_FAMILIES = 'tangnest-robotics-families';
 	const PAGE_STUDENTS = 'tangnest-robotics-students';
-	const PAGE_PROGRAMS = 'tangnest-robotics-programs';
+	const PAGE_PACKAGES = 'tangnest-robotics-packages';
 	const PAGE_INVOICES = 'tangnest-robotics-invoices';
 	const PAGE_SETTINGS = 'tangnest-robotics-settings';
 
@@ -22,11 +22,13 @@ class TR_Admin_Menu {
 		add_action( 'admin_notices', [ $this, 'render_composition_notices' ] );
 		add_action( 'admin_notices', [ $this, 'render_dashboard_page_notice' ] );
 		add_action( 'admin_notices', [ $this, 'render_webhook_secret_mismatch_notice' ] );
+		add_action( 'admin_notices', [ $this, 'render_families_without_package_notice' ] );
 		add_action( 'admin_notices', [ $this, 'render_action_notices' ] );
 
 		add_action( 'admin_init', [ 'TR_Family_Edit', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Student_Edit', 'maybe_handle_submit' ] );
-		add_action( 'admin_init', [ 'TR_Programs_Page', 'maybe_handle_submit' ] );
+		add_action( 'admin_init', [ 'TR_Packages_Page', 'maybe_handle_submit' ] );
+		add_action( 'admin_init', [ 'TR_Packages_Page', 'maybe_handle_row_actions' ] );
 		add_action( 'admin_init', [ 'TR_Settings_Page', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Invoice_Actions', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Invoice_Actions', 'maybe_handle_row_actions' ] );
@@ -48,7 +50,7 @@ class TR_Admin_Menu {
 
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Families', 'tangnest-robotics' ), __( 'Families', 'tangnest-robotics' ), self::CAP, self::PAGE_FAMILIES, [ $this, 'render_families_page' ] );
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Students', 'tangnest-robotics' ), __( 'Students', 'tangnest-robotics' ), self::CAP, self::PAGE_STUDENTS, [ $this, 'render_students_page' ] );
-		add_submenu_page( self::PAGE_FAMILIES, __( 'Programs', 'tangnest-robotics' ), __( 'Programs', 'tangnest-robotics' ), self::CAP, self::PAGE_PROGRAMS, [ $this, 'render_programs_page' ] );
+		add_submenu_page( self::PAGE_FAMILIES, __( 'Packages', 'tangnest-robotics' ), __( 'Packages', 'tangnest-robotics' ), self::CAP, self::PAGE_PACKAGES, [ $this, 'render_packages_page' ] );
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Invoices', 'tangnest-robotics' ), __( 'Invoices', 'tangnest-robotics' ), self::CAP, self::PAGE_INVOICES, [ $this, 'render_invoices_page' ] );
 		add_submenu_page( self::PAGE_FAMILIES, __( 'Settings', 'tangnest-robotics' ), __( 'Settings', 'tangnest-robotics' ), self::CAP, self::PAGE_SETTINGS, [ $this, 'render_settings_page' ] );
 	}
@@ -186,12 +188,12 @@ class TR_Admin_Menu {
 		<?php
 	}
 
-	public function render_programs_page(): void {
+	public function render_packages_page(): void {
 		if ( ! current_user_can( self::CAP ) ) {
 			wp_die( esc_html__( 'You do not have permission to access this page.', 'tangnest-robotics' ) );
 		}
 
-		TR_Programs_Page::render();
+		TR_Packages_Page::render();
 	}
 
 	public function render_settings_page(): void {
@@ -261,7 +263,7 @@ class TR_Admin_Menu {
 
 		$row_action    = sanitize_key( wp_unslash( $_GET['tr_row_action'] ) );
 		$family_id     = absint( $_GET['id'] );
-		$valid_actions = [ 'resend_welcome', 'send_link_whatsapp', 'send_link_email', 'copy_link', 'regenerate_link', 'revoke_link' ];
+		$valid_actions = [ 'resend_welcome', 'send_link_whatsapp', 'send_link_email', 'copy_link', 'regenerate_link', 'revoke_link', 'delete' ];
 
 		if ( ! in_array( $row_action, $valid_actions, true ) || $family_id <= 0 ) {
 			return;
@@ -339,6 +341,32 @@ class TR_Admin_Menu {
 				TR_Access_Tokens::revoke( $family_id );
 			}
 			$this->redirect_with_notice( 'link_revoked' );
+		}
+
+		if ( 'delete' === $row_action ) {
+			if ( null === $family ) {
+				$this->redirect_with_notice( 'family_delete_failed' );
+			}
+
+			// Re-checked here regardless of what the row action link was
+			// rendered for — paid invoices are the financial record and
+			// must never be orphaned by a deleted family.
+			$paid_count = TR_Invoices::count( [ 'family_id' => $family_id, 'status' => 'paid' ] );
+			if ( $paid_count > 0 ) {
+				$this->redirect_with_notice( 'family_delete_has_paid_invoices' );
+			}
+
+			$user        = get_userdata( (int) $family->parent_user_id );
+			$child_count = TR_Families::delete_with_dependents( $family_id );
+
+			TR_Logger::info( 'Family permanently deleted', [
+				'family_id'   => $family_id,
+				'parent_name' => $user ? $user->display_name : '(unknown)',
+				'child_count' => $child_count,
+				'deleted_by'  => wp_get_current_user()->user_login,
+			] );
+
+			$this->redirect_with_notice( 'family_deleted' );
 		}
 	}
 
@@ -434,6 +462,9 @@ class TR_Admin_Menu {
 			'invoice_create_failed'   => [ 'error', __( 'Could not create invoice — an invoice for that period may already exist.', 'tangnest-robotics' ) ],
 			'invoice_deleted'         => [ 'success', __( 'Invoice permanently deleted.', 'tangnest-robotics' ) ],
 			'invoice_delete_failed'   => [ 'error', __( 'That invoice could not be deleted — only cancelled invoices can be deleted.', 'tangnest-robotics' ) ],
+			'family_deleted'          => [ 'success', __( 'Family permanently deleted.', 'tangnest-robotics' ) ],
+			'family_delete_failed'    => [ 'error', __( 'That family could not be found.', 'tangnest-robotics' ) ],
+			'family_delete_has_paid_invoices' => [ 'error', __( 'That family could not be deleted — it has a paid invoice, which is the financial record and must never be removed.', 'tangnest-robotics' ) ],
 		];
 
 		if ( 'invoices_bulk_deleted' === $notice ) {
@@ -493,6 +524,52 @@ class TR_Admin_Menu {
 					/* translators: %s: link to the settings page */
 					esc_html__( 'IremboPay webhook secret mismatch: this plugin has a webhook secret saved, but the WooCommerce IremboPay plugin — which owns the only callback URL IremboPay is actually configured to call — has none. IremboPay is therefore not sending a signature, and every real webhook will be rejected with a 401 until you clear the secret under %s.', 'tangnest-robotics' ),
 					'<a href="' . esc_url( admin_url( 'admin.php?page=' . self::PAGE_SETTINGS ) ) . '">' . esc_html__( 'Robotics → Settings', 'tangnest-robotics' ) . '</a>'
+				);
+				?>
+			</p>
+		</div>
+		<?php
+	}
+
+	/**
+	 * A family with no package can never be billed correctly and its Pay
+	 * button is hidden everywhere — this is the admin-facing counterpart
+	 * so it doesn't just go silently unnoticed.
+	 */
+	public function render_families_without_package_notice(): void {
+		if ( ! current_user_can( self::CAP ) ) {
+			return;
+		}
+
+		$screen = get_current_screen();
+		if ( null === $screen || false === strpos( $screen->id, 'tangnest-robotics' ) ) {
+			return;
+		}
+
+		global $wpdb;
+		$families_table = TR_DB::table_families();
+		$count = (int) $wpdb->get_var( $wpdb->prepare(
+			"SELECT COUNT(*) FROM {$families_table} WHERE status = %s AND package_id IS NULL",
+			[ 'active' ]
+		) );
+
+		if ( $count <= 0 ) {
+			return;
+		}
+		?>
+		<div class="notice notice-warning">
+			<p>
+				<?php
+				printf(
+					/* translators: 1: number of families, 2: link to the Families screen */
+					esc_html( _n(
+						'%1$d active family has no package selected — it cannot be billed or shown a Pay button until you assign one. %2$s',
+						'%1$d active families have no package selected — they cannot be billed or shown a Pay button until you assign one. %2$s',
+						$count,
+						'tangnest-robotics'
+					) ),
+					$count,
+					'<a href="' . esc_url( admin_url( 'admin.php?page=' . self::PAGE_FAMILIES ) ) . '">' . esc_html__( 'Review families', 'tangnest-robotics' ) . '</a>'
 				);
 				?>
 			</p>
@@ -572,20 +649,8 @@ class TR_Admin_Menu {
 			'notes'         => $student->notes,
 		] );
 
-		$enrollments = TR_Enrollments::get_by_student( $student_id );
-		if ( ! empty( $enrollments ) ) {
-			$current = $enrollments[0];
-			if ( in_array( $current->status, [ 'active', 'withdrawn' ], true ) ) {
-				TR_Enrollments::update( (int) $current->id, [
-					'program_id'   => (int) $current->program_id,
-					'enrolled_on'  => $current->enrolled_on,
-					'months_total' => (int) $current->months_total,
-					'months_paid'  => (int) $current->months_paid,
-					'status'       => $new_status,
-				] );
-			}
-		}
-
+		// Enrollments are historical only (v0.8.0) — a withdrawal no longer
+		// touches one, since progress and billing both live on the family.
 		TR_Families::flag_composition_change( (int) $student->family_id );
 
 		wp_safe_redirect( admin_url( 'admin.php?page=' . self::PAGE_STUDENTS ) );

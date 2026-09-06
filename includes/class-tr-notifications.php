@@ -102,18 +102,22 @@ class TR_Notifications {
 		return self::send_welcome_email( $user, $family_id );
 	}
 
+	/**
+	 * Every child shares the same package now (v0.8.0), so this is looked
+	 * up once for the family rather than per child via an enrollment row.
+	 */
 	private static function get_family_students_for_email( int $family_id ): array {
 		$students = TR_Students::get_list( [ 'family_id' => $family_id, 'per_page' => 200 ] );
-		$rows     = [];
 
+		$family       = TR_Families::get( $family_id );
+		$package      = ( $family && ! empty( $family->package_id ) ) ? TR_Programs::get( (int) $family->package_id ) : null;
+		$package_name = $package->name ?? '';
+
+		$rows = [];
 		foreach ( $students as $student ) {
-			$enrollments = TR_Enrollments::get_by_student( (int) $student->id );
-			$enrollment  = $enrollments[0] ?? null;
-			$program     = $enrollment ? TR_Programs::get( (int) $enrollment->program_id ) : null;
-
 			$rows[] = (object) [
 				'name'    => trim( $student->first_name . ' ' . $student->last_name ),
-				'program' => $program->name ?? '',
+				'program' => $package_name,
 			];
 		}
 

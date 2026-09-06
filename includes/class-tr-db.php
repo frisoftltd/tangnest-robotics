@@ -45,7 +45,70 @@ class TR_DB {
 			self::migrate_existing_family_amounts_to_custom();
 		}
 
+		// A brand new install has no families yet — nothing to match to a
+		// package that doesn't exist until the admin enters one by hand.
+		if ( $previous_version && version_compare( $previous_version, '0.8.0', '<' ) ) {
+			self::migrate_families_to_packages();
+		}
+
 		update_option( self::DB_VERSION_OPTION, TANGNEST_ROBOTICS_DB_VERSION );
+	}
+
+	/**
+	 * v0.8.0 repurposes wp_tr_programs as the packages table and moves
+	 * pricing/progress onto the family. The 18 real tiered packages don't
+	 * exist yet at the moment this runs — the admin enters those by hand
+	 * afterward — so this can only match each family to whichever program
+	 * row its children were already enrolled in (that row simply becomes
+	 * one of the packages going forward). A family whose children span more
+	 * than one program, or has none, is left with package_id NULL and
+	 * flagged via the existing composition-review mechanism rather than
+	 * guessed at — the live site only has two families, so a partial
+	 * migration with clear flags beats a wrong guess.
+	 */
+	private static function migrate_families_to_packages(): void {
+		global $wpdb;
+		$families_table = self::table_families();
+
+		$families  = $wpdb->get_results( "SELECT id FROM {$families_table}" );
+		$migrated  = 0;
+		$to_review = 0;
+
+		foreach ( $families as $row ) {
+			$family_id   = (int) $row->id;
+			$enrollments = TR_Enrollments::get_active_by_family( $family_id );
+
+			$program_ids = array_values( array_unique( array_map( static function ( $e ) {
+				return (int) $e->program_id;
+			}, $enrollments ) ) );
+
+			$months_paid = 0;
+			foreach ( $enrollments as $enrollment ) {
+				$months_paid = max( $months_paid, (int) $enrollment->months_paid );
+			}
+
+			$package_id = 1 === count( $program_ids ) ? $program_ids[0] : null;
+
+			if ( null !== $package_id ) {
+				$wpdb->query( $wpdb->prepare(
+					"UPDATE {$families_table} SET package_id = %d, months_paid = %d, updated_at = %s WHERE id = %d",
+					[ $package_id, $months_paid, current_time( 'mysql' ), $family_id ]
+				) );
+				$migrated++;
+			} else {
+				$wpdb->query( $wpdb->prepare(
+					"UPDATE {$families_table} SET package_id = NULL, months_paid = %d, updated_at = %s WHERE id = %d",
+					[ $months_paid, current_time( 'mysql' ), $family_id ]
+				) );
+				TR_Families::flag_composition_change( $family_id );
+				$to_review++;
+			}
+		}
+
+		TR_Logger::info( 'v0.8.0 migration: families matched to packages', [
+			'migrated'  => $migrated,
+			'to_review' => $to_review,
+		] );
 	}
 
 	/**
@@ -103,8 +166,9 @@ class TR_DB {
 		dbDelta( "CREATE TABLE {$families} (
 			id                       BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
 			parent_user_id           BIGINT(20) UNSIGNED NOT NULL,
+			package_id               BIGINT(20) UNSIGNED DEFAULT NULL,
 			monthly_amount           DECIMAL(12,2) NOT NULL DEFAULT '0.00',
-			amount_is_custom         TINYINT(1)   NOT NULL DEFAULT 0,
+			months_paid              TINYINT(3)   UNSIGNED NOT NULL DEFAULT 0,
 			currency                 VARCHAR(10)  NOT NULL DEFAULT 'RWF',
 			billing_day              TINYINT(3)   UNSIGNED NOT NULL DEFAULT 1,
 			status                   VARCHAR(20)  NOT NULL DEFAULT 'active',
@@ -127,7 +191,8 @@ class TR_DB {
 			UNIQUE KEY parent_user_id (parent_user_id),
 			UNIQUE KEY access_token_hash (access_token_hash),
 			UNIQUE KEY message_token_hash (message_token_hash),
-			KEY status (status)
+			KEY status (status),
+			KEY package_id (package_id)
 		) {$charset};" );
 
 		$students = self::table_students();
@@ -155,6 +220,7 @@ class TR_DB {
 			default_monthly_fee    DECIMAL(12,2) NOT NULL DEFAULT '0.00',
 			irembopay_product_code VARCHAR(60)  DEFAULT NULL,
 			start_date             DATE         DEFAULT NULL,
+			notes                  TEXT         DEFAULT NULL,
 			status                 VARCHAR(20)  NOT NULL DEFAULT 'active',
 			created_at             DATETIME     NOT NULL,
 			updated_at             DATETIME     NOT NULL,

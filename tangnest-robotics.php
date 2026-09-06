@@ -3,7 +3,7 @@
  * Plugin Name:       Tangnest Robotics — Class & Payment Manager
  * Plugin URI:        https://github.com/frisoftltd/tangnest-robotics
  * Description:       Manages robotics class enrollment, family billing, and IremboPay payments for Tangnest. Standalone — does not require WooCommerce or Tutor LMS.
- * Version:           0.7.1
+ * Version:           0.8.0
  * Author:            Fri Soft Ltd
  * Author URI:        https://frisoft.rw
  * License:           GPL-2.0-or-later
@@ -15,8 +15,8 @@
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-define( 'TANGNEST_ROBOTICS_VERSION',     '0.7.1' );
-define( 'TANGNEST_ROBOTICS_DB_VERSION',  '0.7.0' );
+define( 'TANGNEST_ROBOTICS_VERSION',     '0.8.0' );
+define( 'TANGNEST_ROBOTICS_DB_VERSION',  '0.8.0' );
 define( 'TANGNEST_ROBOTICS_PLUGIN_FILE', __FILE__ );
 define( 'TANGNEST_ROBOTICS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'TANGNEST_ROBOTICS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -73,7 +73,7 @@ final class Tangnest_Robotics {
 
 		if ( is_admin() ) {
 			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-admin-menu.php';
-			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-programs-page.php';
+			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-packages-page.php';
 			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-families-table.php';
 			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-family-edit.php';
 			require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/admin/class-tr-students-table.php';

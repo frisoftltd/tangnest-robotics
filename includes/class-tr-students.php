@@ -101,6 +101,19 @@ class TR_Students {
 		return (int) $wpdb->get_var( $wpdb->prepare( $sql, $params ) );
 	}
 
+	/**
+	 * Part of TR_Families::delete_with_dependents() — called after
+	 * TR_Enrollments::delete_by_family(), which still needs these rows in
+	 * place to join against.
+	 */
+	public static function delete_by_family( int $family_id ): int {
+		global $wpdb;
+
+		$wpdb->query( $wpdb->prepare( "DELETE FROM " . self::table() . " WHERE family_id = %d", [ $family_id ] ) );
+
+		return (int) $wpdb->rows_affected;
+	}
+
 	private static function build_where( array $args ): array {
 		global $wpdb;
 

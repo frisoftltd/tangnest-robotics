@@ -95,10 +95,10 @@ class TR_Invoices_Table extends WP_List_Table {
 
 		global $wpdb;
 		$periods  = $wpdb->get_col( 'SELECT DISTINCT period FROM ' . TR_DB::table_invoices() . ' ORDER BY period DESC' );
-		$programs = TR_Programs::get_list( [ 'per_page' => 200 ] );
+		$packages = TR_Programs::get_list( [ 'per_page' => 200 ] );
 
 		$selected_period  = isset( $_REQUEST['period'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['period'] ) ) : '';
-		$selected_program = isset( $_REQUEST['program_id'] ) ? absint( $_REQUEST['program_id'] ) : 0;
+		$selected_package = isset( $_REQUEST['program_id'] ) ? absint( $_REQUEST['program_id'] ) : 0;
 		?>
 		<div class="alignleft actions">
 			<label class="screen-reader-text" for="tr-filter-period"><?php esc_html_e( 'Filter by period', 'tangnest-robotics' ); ?></label>
@@ -109,11 +109,11 @@ class TR_Invoices_Table extends WP_List_Table {
 				<?php endforeach; ?>
 			</select>
 
-			<label class="screen-reader-text" for="tr-filter-program"><?php esc_html_e( 'Filter by program', 'tangnest-robotics' ); ?></label>
+			<label class="screen-reader-text" for="tr-filter-program"><?php esc_html_e( 'Filter by package', 'tangnest-robotics' ); ?></label>
 			<select name="program_id" id="tr-filter-program">
-				<option value="0"><?php esc_html_e( 'All programs', 'tangnest-robotics' ); ?></option>
-				<?php foreach ( $programs as $program ) : ?>
-					<option value="<?php echo esc_attr( $program->id ); ?>" <?php selected( $selected_program, (int) $program->id ); ?>><?php echo esc_html( $program->name ); ?></option>
+				<option value="0"><?php esc_html_e( 'All packages', 'tangnest-robotics' ); ?></option>
+				<?php foreach ( $packages as $package ) : ?>
+					<option value="<?php echo esc_attr( $package->id ); ?>" <?php selected( $selected_package, (int) $package->id ); ?>><?php echo esc_html( $package->name ); ?></option>
 				<?php endforeach; ?>
 			</select>
 			<?php submit_button( __( 'Filter', 'tangnest-robotics' ), '', 'filter_action', false ); ?>
@@ -129,11 +129,8 @@ class TR_Invoices_Table extends WP_List_Table {
 
 		$status  = isset( $_REQUEST['status'] ) ? sanitize_key( wp_unslash( $_REQUEST['status'] ) ) : '';
 		$period  = isset( $_REQUEST['period'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['period'] ) ) : '';
-		$program = isset( $_REQUEST['program_id'] ) ? absint( $_REQUEST['program_id'] ) : 0;
+		$package = isset( $_REQUEST['program_id'] ) ? absint( $_REQUEST['program_id'] ) : 0;
 		$search  = isset( $_REQUEST['s'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['s'] ) ) : '';
-
-		$students_table    = TR_DB::table_students();
-		$enrollments_table = TR_DB::table_enrollments();
 
 		$orderby_map = [
 			'id'       => 'i.id',
@@ -159,9 +156,10 @@ class TR_Invoices_Table extends WP_List_Table {
 			$params[] = $period;
 		}
 
-		if ( $program > 0 ) {
-			$where[]  = "i.family_id IN ( SELECT s.family_id FROM {$students_table} s INNER JOIN {$enrollments_table} e ON e.student_id = s.id WHERE e.program_id = %d )";
-			$params[] = $program;
+		if ( $package > 0 ) {
+			$families_table = TR_DB::table_families();
+			$where[]        = "i.family_id IN ( SELECT id FROM {$families_table} WHERE package_id = %d )";
+			$params[]       = $package;
 		}
 
 		if ( '' !== $search ) {

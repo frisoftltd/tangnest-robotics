@@ -93,7 +93,7 @@ $is_overdue = $days_overdue > 0;
 							<?php esc_html_e( 'If you have already paid, please let Tangnest know so we can update your record — sorry for the reminder in that case.', 'tangnest-robotics' ); ?>
 						</p>
 
-						<?php if ( '' !== $pay_url && TR_IremboPay_Settings::is_enabled() && TR_Payment::has_resolvable_product_code( $invoice ) ) : ?>
+						<?php if ( '' !== $pay_url && TR_IremboPay_Settings::is_enabled() && TR_Payment::is_payable( $invoice ) ) : ?>
 							<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0;">
 								<tr>
 									<td style="border-radius:6px;background:#12c4c4;">

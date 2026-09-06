@@ -8,9 +8,18 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * billing_day of 0 means "not yet anchored" — the column is NOT NULL so we
  * use 0 as the sentinel rather than allowing a real 1–28 value to be
  * ambiguous with "unset".
+ *
+ * v0.8.0: a family selects one package (wp_tr_programs, repurposed) and
+ * monthly_amount becomes a snapshot of that package's price at save
+ * time — callers (TR_Family_Edit) resolve the package and pass the
+ * resulting figure in explicitly; this class never recalculates it on its
+ * own, which is what stops a later package price change retroactively
+ * altering an existing family's billing. Progress (months_paid) now lives
+ * here too, one figure per family since every child in it finishes
+ * together — see increment_months_paid() and progress_label().
  */
 class TR_Families {
-	const STATUSES        = [ 'active', 'inactive' ];
+	const STATUSES        = [ 'active', 'inactive', 'completed' ];
 	const REVIEW_OPTION    = 'tangnest_robotics_review_families';
 
 	private static function table(): string {
@@ -22,12 +31,13 @@ class TR_Families {
 		$now = current_time( 'mysql' );
 
 		$sql = $wpdb->prepare(
-			"INSERT INTO " . self::table() . " (parent_user_id, monthly_amount, amount_is_custom, currency, billing_day, status, notes, created_at, updated_at)
-			 VALUES (%d, %s, %d, %s, %d, %s, %s, %s, %s)",
+			"INSERT INTO " . self::table() . " (parent_user_id, monthly_amount, package_id, months_paid, currency, billing_day, status, notes, created_at, updated_at)
+			 VALUES (%d, %s, %d, %d, %s, %d, %s, %s, %s, %s)",
 			[
 				absint( $data['parent_user_id'] ),
 				number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
-				! empty( $data['amount_is_custom'] ) ? 1 : 0,
+				! empty( $data['package_id'] ) ? absint( $data['package_id'] ) : null,
+				absint( $data['months_paid'] ?? 0 ),
 				$data['currency'] ?? 'RWF',
 				absint( $data['billing_day'] ?? 0 ),
 				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
@@ -46,10 +56,11 @@ class TR_Families {
 		$now = current_time( 'mysql' );
 
 		$sql = $wpdb->prepare(
-			"UPDATE " . self::table() . " SET monthly_amount = %s, amount_is_custom = %d, currency = %s, billing_day = %d, status = %s, notes = %s, updated_at = %s WHERE id = %d",
+			"UPDATE " . self::table() . " SET monthly_amount = %s, package_id = %d, months_paid = %d, currency = %s, billing_day = %d, status = %s, notes = %s, updated_at = %s WHERE id = %d",
 			[
 				number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
-				! empty( $data['amount_is_custom'] ) ? 1 : 0,
+				! empty( $data['package_id'] ) ? absint( $data['package_id'] ) : null,
+				absint( $data['months_paid'] ?? 0 ),
 				$data['currency'] ?? 'RWF',
 				absint( $data['billing_day'] ?? 0 ),
 				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
@@ -63,46 +74,95 @@ class TR_Families {
 	}
 
 	/**
-	 * The sum of every active enrollment's program fee — what a family's
-	 * amount would be if it were not a custom bundle. Never touches the
-	 * database; callers decide what to do with the number.
+	 * The one place a payment (webhook or admin "Record payment") advances
+	 * a family — exactly once per payment, regardless of how many children
+	 * are on the package, since they all finish together. Marks the family
+	 * 'completed' and raises the existing composition-review notice once
+	 * months_paid reaches the package's duration.
 	 */
-	public static function calculate_amount( int $family_id ): float {
-		$enrollments = TR_Enrollments::get_active_by_family( $family_id );
-
-		$total = 0.0;
-		foreach ( $enrollments as $enrollment ) {
-			$program = TR_Programs::get( (int) $enrollment->program_id );
-			if ( $program ) {
-				$total += (float) $program->default_monthly_fee;
-			}
-		}
-
-		return $total;
-	}
-
-	/**
-	 * Recomputes and stores monthly_amount from current active enrollments.
-	 * No-ops when the family's bundle override is in use — the entire point
-	 * of the override is that a recalculation must never silently replace a
-	 * hand-entered total. Never touches invoices that already exist; only
-	 * the family row itself.
-	 */
-	public static function recalculate_amount( int $family_id ): void {
+	public static function increment_months_paid( int $family_id ): void {
 		global $wpdb;
 
 		$family = self::get( $family_id );
-		if ( null === $family || ! empty( $family->amount_is_custom ) ) {
+		if ( null === $family ) {
 			return;
 		}
 
-		$total = self::calculate_amount( $family_id );
+		$months_paid = (int) $family->months_paid + 1;
 
 		$sql = $wpdb->prepare(
-			"UPDATE " . self::table() . " SET monthly_amount = %s, updated_at = %s WHERE id = %d",
-			[ number_format( $total, 2, '.', '' ), current_time( 'mysql' ), $family_id ]
+			"UPDATE " . self::table() . " SET months_paid = %d, updated_at = %s WHERE id = %d",
+			[ $months_paid, current_time( 'mysql' ), $family_id ]
 		);
 		$wpdb->query( $sql );
+
+		$package = ! empty( $family->package_id ) ? TR_Programs::get( (int) $family->package_id ) : null;
+
+		if ( $package && $months_paid >= (int) $package->duration_months && 'completed' !== $family->status ) {
+			$wpdb->query( $wpdb->prepare(
+				"UPDATE " . self::table() . " SET status = %s, updated_at = %s WHERE id = %d",
+				[ 'completed', current_time( 'mysql' ), $family_id ]
+			) );
+			self::flag_composition_change( $family_id );
+		}
+	}
+
+	/**
+	 * Mirrors the old per-enrollment version, but reads the family's own
+	 * months_paid against its package's duration instead of an enrollment
+	 * row — every child on the family shows this same figure.
+	 */
+	public static function progress_label( object $family ): string {
+		if ( 'completed' === $family->status ) {
+			return __( 'Completed', 'tangnest-robotics' );
+		}
+
+		if ( empty( $family->package_id ) ) {
+			return __( 'No package', 'tangnest-robotics' );
+		}
+
+		$package      = TR_Programs::get( (int) $family->package_id );
+		$months_total = $package ? (int) $package->duration_months : 0;
+		$current      = min( (int) $family->months_paid + 1, max( $months_total, 1 ) );
+
+		return sprintf(
+			/* translators: 1: current month number, 2: total months */
+			__( 'Month %1$d of %2$d', 'tangnest-robotics' ),
+			$current,
+			$months_total
+		);
+	}
+
+	/**
+	 * Deletes the family and every record that only makes sense attached
+	 * to it — children, their (historical) enrollments, and any invoice
+	 * that isn't 'paid'. The caller (TR_Admin_Menu) has already refused
+	 * this when a paid invoice exists; this method does not re-check, same
+	 * as the invoice/program delete primitives leave their own
+	 * preconditions to the caller. Never touches the parent's WordPress
+	 * user account — that belongs to the LMS too.
+	 *
+	 * @return int The number of children that were deleted, for the log line.
+	 */
+	public static function delete_with_dependents( int $family_id ): int {
+		global $wpdb;
+
+		$child_count = TR_Students::count( [ 'family_id' => $family_id ] );
+
+		$wpdb->query( 'START TRANSACTION' );
+		TR_Enrollments::delete_by_family( $family_id );
+		TR_Students::delete_by_family( $family_id );
+		TR_Invoices::delete_non_paid_by_family( $family_id );
+		self::delete( $family_id );
+		$wpdb->query( 'COMMIT' );
+
+		return $child_count;
+	}
+
+	public static function delete( int $id ): bool {
+		global $wpdb;
+
+		return false !== $wpdb->query( $wpdb->prepare( "DELETE FROM " . self::table() . " WHERE id = %d", [ $id ] ) );
 	}
 
 	public static function get( int $id ): ?object {
@@ -155,6 +215,11 @@ class TR_Families {
 		if ( ! empty( $args['status'] ) ) {
 			$where[]  = 'status = %s';
 			$params[] = $args['status'];
+		}
+
+		if ( ! empty( $args['package_id'] ) ) {
+			$where[]  = 'package_id = %d';
+			$params[] = absint( $args['package_id'] );
 		}
 
 		return [ implode( ' AND ', $where ), $params ];

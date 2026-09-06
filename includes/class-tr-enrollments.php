@@ -134,6 +134,22 @@ class TR_Enrollments {
 		return $wpdb->get_results( $sql );
 	}
 
+	/**
+	 * Part of TR_Families::delete_with_dependents() — must run BEFORE
+	 * TR_Students::delete_by_family(), since this needs the students table
+	 * still intact to join against.
+	 */
+	public static function delete_by_family( int $family_id ): void {
+		global $wpdb;
+		$students_table = TR_DB::table_students();
+
+		$sql = $wpdb->prepare(
+			"DELETE e FROM " . self::table() . " e INNER JOIN {$students_table} s ON s.id = e.student_id WHERE s.family_id = %d",
+			[ $family_id ]
+		);
+		$wpdb->query( $sql );
+	}
+
 	public static function get_active_by_family( int $family_id ): array {
 		global $wpdb;
 		$students_table = TR_DB::table_students();
