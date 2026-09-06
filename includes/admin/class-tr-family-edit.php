@@ -56,6 +56,9 @@ class TR_Family_Edit {
 
 		$user_id  = 0;
 		$new_email = $new_first = $new_last = '';
+		$existing_user = null;
+		$existing_email = $existing_first = $existing_last = '';
+		$email_changed = false;
 
 		if ( 'new' === $mode ) {
 			$new_email = isset( $_POST['new_email'] ) ? sanitize_email( wp_unslash( $_POST['new_email'] ) ) : '';
@@ -72,9 +75,28 @@ class TR_Family_Edit {
 				$errors[] = __( 'First and last name are required for a new parent.', 'tangnest-robotics' );
 			}
 		} else {
-			$user_id = isset( $_POST['existing_user_id'] ) ? absint( $_POST['existing_user_id'] ) : 0;
-			if ( $user_id <= 0 || ! get_userdata( $user_id ) ) {
+			$user_id       = isset( $_POST['existing_user_id'] ) ? absint( $_POST['existing_user_id'] ) : 0;
+			$existing_user = $user_id > 0 ? get_userdata( $user_id ) : null;
+
+			if ( null === $existing_user ) {
 				$errors[] = __( 'Please select an existing parent user.', 'tangnest-robotics' );
+			} else {
+				$existing_email = isset( $_POST['existing_email'] ) ? sanitize_email( wp_unslash( $_POST['existing_email'] ) ) : '';
+				$existing_first = isset( $_POST['existing_first_name'] ) ? sanitize_text_field( wp_unslash( $_POST['existing_first_name'] ) ) : '';
+				$existing_last  = isset( $_POST['existing_last_name'] ) ? sanitize_text_field( wp_unslash( $_POST['existing_last_name'] ) ) : '';
+
+				if ( ! is_email( $existing_email ) ) {
+					$errors[] = __( 'Please enter a valid email for the parent.', 'tangnest-robotics' );
+				} else {
+					$email_owner = email_exists( $existing_email );
+					if ( $email_owner && (int) $email_owner !== $user_id ) {
+						$errors[] = __( 'That email address already belongs to a different WordPress user.', 'tangnest-robotics' );
+					}
+				}
+
+				if ( '' === $existing_first || '' === $existing_last ) {
+					$errors[] = __( 'First and last name are required.', 'tangnest-robotics' );
+				}
 			}
 		}
 
@@ -97,6 +119,24 @@ class TR_Family_Edit {
 
 			if ( is_wp_error( $user_id ) ) {
 				set_transient( self::state_key(), [ 'errors' => [ $user_id->get_error_message() ], 'values' => wp_unslash( $_POST ) ], MINUTE_IN_SECONDS );
+				wp_safe_redirect( self::edit_url( $family_id ) );
+				exit;
+			}
+		} else {
+			// Never touches user_pass, user_login or role — this only ever
+			// updates identity fields the plugin actually shows the admin.
+			$email_changed = strtolower( $existing_user->user_email ) !== strtolower( $existing_email );
+
+			$update_result = wp_update_user( [
+				'ID'           => $user_id,
+				'user_email'   => $existing_email,
+				'first_name'   => $existing_first,
+				'last_name'    => $existing_last,
+				'display_name' => trim( $existing_first . ' ' . $existing_last ),
+			] );
+
+			if ( is_wp_error( $update_result ) ) {
+				set_transient( self::state_key(), [ 'errors' => [ $update_result->get_error_message() ], 'values' => wp_unslash( $_POST ) ], MINUTE_IN_SECONDS );
 				wp_safe_redirect( self::edit_url( $family_id ) );
 				exit;
 			}
@@ -129,6 +169,17 @@ class TR_Family_Edit {
 		} else {
 			$data['billing_day'] = $billing_day_input;
 			$family_id            = TR_Families::insert( $data );
+		}
+
+		if ( $email_changed ) {
+			// Info, not debug — this affects where invoices, receipts and
+			// access links get sent from now on, worth keeping regardless
+			// of the debug-logging toggle.
+			TR_Logger::info( 'Parent email changed', [
+				'family_id' => $family_id,
+				'old_email' => $existing_user->user_email,
+				'new_email' => $existing_email,
+			] );
 		}
 
 		foreach ( $valid_children as $child ) {
@@ -309,6 +360,14 @@ class TR_Family_Edit {
 		$user_search = isset( $_GET['user_search'] ) ? sanitize_text_field( wp_unslash( $_GET['user_search'] ) ) : '';
 		$selected_user_id = isset( $posted['existing_user_id'] ) ? absint( $posted['existing_user_id'] ) : ( $parent_user ? $parent_user->ID : 0 );
 
+		// Prefilled from whichever existing user is currently selected —
+		// posted values win on a validation-error redisplay so the admin's
+		// edits aren't lost.
+		$selected_existing_user = $selected_user_id > 0 ? get_userdata( $selected_user_id ) : null;
+		$existing_parent_email  = $posted['existing_email'] ?? ( $selected_existing_user ? $selected_existing_user->user_email : '' );
+		$existing_parent_first  = $posted['existing_first_name'] ?? ( $selected_existing_user ? $selected_existing_user->first_name : '' );
+		$existing_parent_last   = $posted['existing_last_name'] ?? ( $selected_existing_user ? $selected_existing_user->last_name : '' );
+
 		$is_custom       = isset( $posted['amount_is_custom'] ) ? ! empty( $posted['amount_is_custom'] ) : ( $family ? (bool) $family->amount_is_custom : false );
 		$calculated_now  = $family ? TR_Families::calculate_amount( (int) $family->id ) : 0.0;
 		$custom_value    = $posted['custom_amount'] ?? ( $family->monthly_amount ?? '0.00' );
@@ -361,24 +420,43 @@ class TR_Family_Edit {
 									'search'           => '' !== $user_search ? '*' . $user_search . '*' : '',
 								] ); ?>
 							</p>
+							<div id="tr-existing-parent-fields" style="<?php echo 'existing' === $parent_mode ? '' : 'display:none;'; ?>">
+								<table class="form-table" role="presentation">
+									<tr>
+										<th><label for="tr-existing-email"><?php esc_html_e( 'Email', 'tangnest-robotics' ); ?></label></th>
+										<td><input type="email" id="tr-existing-email" name="existing_email" class="regular-text" value="<?php echo esc_attr( $existing_parent_email ); ?>"></td>
+									</tr>
+									<tr>
+										<th><label for="tr-existing-first"><?php esc_html_e( 'First name', 'tangnest-robotics' ); ?></label></th>
+										<td><input type="text" id="tr-existing-first" name="existing_first_name" class="regular-text" value="<?php echo esc_attr( $existing_parent_first ); ?>"></td>
+									</tr>
+									<tr>
+										<th><label for="tr-existing-last"><?php esc_html_e( 'Last name', 'tangnest-robotics' ); ?></label></th>
+										<td><input type="text" id="tr-existing-last" name="existing_last_name" class="regular-text" value="<?php echo esc_attr( $existing_parent_last ); ?>"></td>
+									</tr>
+								</table>
+								<p class="description"><?php esc_html_e( 'Editing these updates the WordPress user directly — invoices, receipts and access links all follow the email on file. Picking a different user above does not refresh these fields until the page reloads.', 'tangnest-robotics' ); ?></p>
+							</div>
 							<p>
 								<label><input type="radio" name="parent_mode" value="new" <?php checked( $parent_mode, 'new' ); ?>> <?php esc_html_e( 'Create new parent', 'tangnest-robotics' ); ?></label>
 							</p>
-							<table class="form-table" role="presentation">
-								<tr>
-									<th><label for="tr-new-email"><?php esc_html_e( 'Email', 'tangnest-robotics' ); ?></label></th>
-									<td><input type="email" id="tr-new-email" name="new_email" class="regular-text" value="<?php echo esc_attr( $posted['new_email'] ?? '' ); ?>"></td>
-								</tr>
-								<tr>
-									<th><label for="tr-new-first"><?php esc_html_e( 'First name', 'tangnest-robotics' ); ?></label></th>
-									<td><input type="text" id="tr-new-first" name="new_first_name" class="regular-text" value="<?php echo esc_attr( $posted['new_first_name'] ?? '' ); ?>"></td>
-								</tr>
-								<tr>
-									<th><label for="tr-new-last"><?php esc_html_e( 'Last name', 'tangnest-robotics' ); ?></label></th>
-									<td><input type="text" id="tr-new-last" name="new_last_name" class="regular-text" value="<?php echo esc_attr( $posted['new_last_name'] ?? '' ); ?>"></td>
-								</tr>
-							</table>
-							<p class="description"><?php esc_html_e( 'New users get the Subscriber role and an auto-generated password. Credentials are not emailed in this release.', 'tangnest-robotics' ); ?></p>
+							<div id="tr-new-parent-fields" style="<?php echo 'new' === $parent_mode ? '' : 'display:none;'; ?>">
+								<table class="form-table" role="presentation">
+									<tr>
+										<th><label for="tr-new-email"><?php esc_html_e( 'Email', 'tangnest-robotics' ); ?></label></th>
+										<td><input type="email" id="tr-new-email" name="new_email" class="regular-text" value="<?php echo esc_attr( $posted['new_email'] ?? '' ); ?>"></td>
+									</tr>
+									<tr>
+										<th><label for="tr-new-first"><?php esc_html_e( 'First name', 'tangnest-robotics' ); ?></label></th>
+										<td><input type="text" id="tr-new-first" name="new_first_name" class="regular-text" value="<?php echo esc_attr( $posted['new_first_name'] ?? '' ); ?>"></td>
+									</tr>
+									<tr>
+										<th><label for="tr-new-last"><?php esc_html_e( 'Last name', 'tangnest-robotics' ); ?></label></th>
+										<td><input type="text" id="tr-new-last" name="new_last_name" class="regular-text" value="<?php echo esc_attr( $posted['new_last_name'] ?? '' ); ?>"></td>
+									</tr>
+								</table>
+								<p class="description"><?php esc_html_e( 'New users get the Subscriber role and an auto-generated password. Credentials are not emailed in this release.', 'tangnest-robotics' ); ?></p>
+							</div>
 						</td>
 					</tr>
 					<tr>
@@ -568,6 +646,20 @@ class TR_Family_Edit {
 					billingInput.readOnly = ! overrideCb.checked;
 				} );
 			}
+
+			var parentModeRadios = document.querySelectorAll( 'input[name="parent_mode"]' );
+			var newParentFields = document.getElementById( 'tr-new-parent-fields' );
+			var existingParentFields = document.getElementById( 'tr-existing-parent-fields' );
+			function toggleParentFields() {
+				var checked = document.querySelector( 'input[name="parent_mode"]:checked' );
+				var mode = checked ? checked.value : 'existing';
+				newParentFields.style.display = ( 'new' === mode ) ? '' : 'none';
+				existingParentFields.style.display = ( 'existing' === mode ) ? '' : 'none';
+			}
+			parentModeRadios.forEach( function( radio ) {
+				radio.addEventListener( 'change', toggleParentFields );
+			} );
+			toggleParentFields();
 
 			recompute();
 		})();

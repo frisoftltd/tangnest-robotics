@@ -17,6 +17,11 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.6.1
+- Fix: the "Create new parent" fields on the family edit screen were visible (and appeared editable) even while "Use existing WordPress user" was selected
+- New: editable Email, First name and Last name for the linked existing parent, pre-filled from the WordPress user record — updates the WP user and the plugin's parent_name/parent_email meta on save, with a collision check against other users' emails
+- Every parent email change is logged at info level with the family ID and both addresses
+
 ### v0.6.0
 - Changed: Monthly fees are now set on the program, not per family
 - New: Family amounts calculate automatically from enrolled children
