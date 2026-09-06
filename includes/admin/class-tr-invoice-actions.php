@@ -271,7 +271,7 @@ class TR_Invoice_Actions {
 
 		$row_action    = sanitize_key( wp_unslash( $_GET['tr_row_action'] ) );
 		$invoice_id    = absint( $_GET['id'] );
-		$valid_actions = [ 'cancel', 'send_reminder_email', 'send_reminder_whatsapp' ];
+		$valid_actions = [ 'cancel', 'send_reminder_email', 'send_reminder_whatsapp', 'delete' ];
 
 		if ( ! in_array( $row_action, $valid_actions, true ) || $invoice_id <= 0 ) {
 			return;
@@ -314,6 +314,34 @@ class TR_Invoice_Actions {
 			header( 'Location: ' . $whatsapp_url );
 			exit;
 		}
+
+		if ( 'delete' === $row_action ) {
+			// Re-checked here regardless of what the row action link was
+			// rendered for — a tampered ID/status combination must never
+			// delete a pending, overdue, paid or waived invoice.
+			if ( null === $invoice || 'cancelled' !== $invoice->status ) {
+				self::redirect_with_notice( 'invoice_delete_failed' );
+			}
+
+			self::log_and_delete_invoice( $invoice );
+
+			self::redirect_with_notice( 'invoice_deleted' );
+		}
+	}
+
+	private static function log_and_delete_invoice( object $invoice ): void {
+		$admin = wp_get_current_user();
+
+		TR_Logger::info( 'Invoice permanently deleted', [
+			'invoice_id'   => $invoice->id,
+			'family_id'    => $invoice->family_id,
+			'period'       => $invoice->period,
+			'amount'       => $invoice->amount,
+			'deleted_by'   => $admin->ID,
+			'deleted_by_user' => $admin->user_login,
+		] );
+
+		TR_Invoices::delete( (int) $invoice->id );
 	}
 
 	/**
@@ -374,7 +402,7 @@ class TR_Invoice_Actions {
 			$action = sanitize_key( wp_unslash( $_REQUEST['action2'] ) );
 		}
 
-		if ( ! in_array( $action, [ 'mark_overdue', 'export_csv' ], true ) ) {
+		if ( ! in_array( $action, [ 'mark_overdue', 'export_csv', 'delete' ], true ) ) {
 			return;
 		}
 
@@ -403,6 +431,40 @@ class TR_Invoice_Actions {
 		if ( 'export_csv' === $action ) {
 			self::export_csv( $ids );
 		}
+
+		if ( 'delete' === $action ) {
+			self::bulk_delete( $ids );
+		}
+	}
+
+	/**
+	 * Any selected invoice that isn't cancelled is silently skipped rather
+	 * than aborting the whole batch — a paid or pending invoice must never
+	 * be deletable no matter what else was checked alongside it.
+	 */
+	private static function bulk_delete( array $ids ): void {
+		$deleted = 0;
+		$skipped = 0;
+
+		foreach ( $ids as $id ) {
+			$invoice = TR_Invoices::get( $id );
+
+			if ( null === $invoice || 'cancelled' !== $invoice->status ) {
+				$skipped++;
+				continue;
+			}
+
+			self::log_and_delete_invoice( $invoice );
+			$deleted++;
+		}
+
+		wp_safe_redirect( add_query_arg( [
+			'page'      => TR_Admin_Menu::PAGE_INVOICES,
+			'tr_notice' => 'invoices_bulk_deleted',
+			'deleted'   => $deleted,
+			'skipped'   => $skipped,
+		], admin_url( 'admin.php' ) ) );
+		exit;
 	}
 
 	private static function export_csv( array $ids ): void {

@@ -55,6 +55,7 @@ class TR_Invoices_Table extends WP_List_Table {
 		return [
 			'mark_overdue' => __( 'Mark overdue', 'tangnest-robotics' ),
 			'export_csv'   => __( 'Export to CSV', 'tangnest-robotics' ),
+			'delete'       => __( 'Delete (cancelled only)', 'tangnest-robotics' ),
 		];
 	}
 
@@ -429,6 +430,22 @@ class TR_Invoices_Table extends WP_List_Table {
 			esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'action' => 'edit', 'id' => $item->family_id ], admin_url( 'admin.php' ) ) ),
 			esc_html__( 'View family', 'tangnest-robotics' )
 		);
+
+		// Only ever offered on an already-cancelled invoice — paid invoices
+		// are the financial record and must never be deletable from here,
+		// and the handler re-checks status regardless of what was rendered.
+		if ( 'cancelled' === $item->status ) {
+			$actions['delete'] = sprintf(
+				'<a href="%s" onclick="return confirm(\'%s\');">%s</a>',
+				esc_url( wp_nonce_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'tr_row_action' => 'delete', 'id' => $item->id ], admin_url( 'admin.php' ) ), $nonce_action ) ),
+				esc_js( sprintf(
+					/* translators: %d: invoice ID */
+					__( 'Permanently delete invoice #%d? This cannot be undone.', 'tangnest-robotics' ),
+					$item->id
+				) ),
+				esc_html__( 'Delete', 'tangnest-robotics' )
+			);
+		}
 
 		return $actions;
 	}

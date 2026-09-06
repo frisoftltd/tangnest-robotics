@@ -149,13 +149,15 @@
 
 .tangnest-robotics-page .tr-row-action--revoke_link a,
 .tangnest-robotics-page .tr-row-action--cancel a,
-.tangnest-robotics-page .tr-row-action--waive a {
+.tangnest-robotics-page .tr-row-action--waive a,
+.tangnest-robotics-page .tr-row-action--delete a {
 	color: #b32d2e;
 }
 
 .tangnest-robotics-page .tr-row-action--revoke_link a:hover,
 .tangnest-robotics-page .tr-row-action--cancel a:hover,
-.tangnest-robotics-page .tr-row-action--waive a:hover {
+.tangnest-robotics-page .tr-row-action--waive a:hover,
+.tangnest-robotics-page .tr-row-action--delete a:hover {
 	background: #fbe4e4;
 }
 

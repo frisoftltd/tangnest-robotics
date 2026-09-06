@@ -236,6 +236,21 @@ class TR_Invoices {
 		return false !== $wpdb->query( $sql );
 	}
 
+	/**
+	 * A genuine hard delete — the one exception to this table's usual
+	 * status-flip-only rule. Restricted by the caller (TR_Invoice_Actions)
+	 * to invoices already in 'cancelled' status; this method itself does
+	 * not re-check status, same as set_status()/mark_paid() leave their
+	 * own preconditions to the caller.
+	 */
+	public static function delete( int $id ): bool {
+		global $wpdb;
+
+		$sql = $wpdb->prepare( "DELETE FROM " . self::table() . " WHERE id = %d", [ $id ] );
+
+		return false !== $wpdb->query( $sql );
+	}
+
 	public static function mark_overdue_due_before( string $date ): int {
 		global $wpdb;
 

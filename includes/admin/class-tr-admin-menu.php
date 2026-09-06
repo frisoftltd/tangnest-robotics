@@ -431,7 +431,30 @@ class TR_Admin_Menu {
 			'no_invoices_selected'    => [ 'error', __( 'No invoices were selected.', 'tangnest-robotics' ) ],
 			'invoice_created'         => [ 'success', __( 'Invoice created.', 'tangnest-robotics' ) ],
 			'invoice_create_failed'   => [ 'error', __( 'Could not create invoice — an invoice for that period may already exist.', 'tangnest-robotics' ) ],
+			'invoice_deleted'         => [ 'success', __( 'Invoice permanently deleted.', 'tangnest-robotics' ) ],
+			'invoice_delete_failed'   => [ 'error', __( 'That invoice could not be deleted — only cancelled invoices can be deleted.', 'tangnest-robotics' ) ],
 		];
+
+		if ( 'invoices_bulk_deleted' === $notice ) {
+			$deleted = isset( $_GET['deleted'] ) ? absint( $_GET['deleted'] ) : 0;
+			$skipped = isset( $_GET['skipped'] ) ? absint( $_GET['skipped'] ) : 0;
+
+			$text = $skipped > 0
+				? sprintf(
+					/* translators: 1: number deleted, 2: number skipped */
+					_n( '%1$d invoice deleted, %2$d skipped (not cancelled).', '%1$d invoices deleted, %2$d skipped (not cancelled).', $deleted, 'tangnest-robotics' ),
+					$deleted,
+					$skipped
+				)
+				: sprintf(
+					/* translators: %d: number deleted */
+					_n( '%d invoice deleted.', '%d invoices deleted.', $deleted, 'tangnest-robotics' ),
+					$deleted
+				);
+
+			printf( '<div class="notice notice-%s is-dismissible"><p>%s</p></div>', esc_attr( $skipped > 0 ? 'warning' : 'success' ), esc_html( $text ) );
+			return;
+		}
 
 		if ( ! isset( $messages[ $notice ] ) ) {
 			return;

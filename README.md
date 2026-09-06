@@ -17,6 +17,10 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.6.2
+- New: Delete row action and bulk action on the Invoices screen, restricted to cancelled invoices only — never available on pending, overdue, paid or waived invoices, re-checked server-side regardless of what was rendered
+- Every deletion is logged at info level with the invoice ID, family ID, period, amount and the admin who did it
+
 ### v0.6.1
 - Fix: the "Create new parent" fields on the family edit screen were visible (and appeared editable) even while "Use existing WordPress user" was selected
 - New: editable Email, First name and Last name for the linked existing parent, pre-filled from the WordPress user record — updates the WP user and the plugin's parent_name/parent_email meta on save, with a collision check against other users' emails
