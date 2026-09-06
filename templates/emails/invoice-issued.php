@@ -5,17 +5,18 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * TR_Notifications::render_invoice_issued_template() with $user (WP_User),
  * $invoice (object: period, amount, currency, due_date), $students (array
  * of ['student_name'=>, 'program_name'=>, 'month_number'=>, 'months_total'=>]),
- * $dashboard_url and $access_url already in scope.
+ * $access_url and $pay_url already in scope.
  *
- * $access_url is '' unless the family's current passwordless link is still
- * reusable — it is never minted here (see TR_Access_Tokens::get_reusable_url_only()).
- * The schedule link below falls back to the plain $dashboard_url when empty.
+ * Both carry a message token (spec v0.7.0) minted fresh for this one send
+ * — independent of the device-bound access token, so this email can never
+ * invalidate a link the admin sent by WhatsApp or vice versa. $pay_url is
+ * '' whenever $access_url is (no dashboard page configured); the Pay now
+ * block below is gated on it accordingly.
  *
  * Same inline-CSS, table-safe, max-width 600px layout as welcome.php.
  */
-$first_name    = $user->first_name ? $user->first_name : $user->display_name;
-$due_date      = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_date ) );
-$schedule_link = '' !== $access_url ? $access_url : $dashboard_url;
+$first_name = $user->first_name ? $user->first_name : $user->display_name;
+$due_date   = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_date ) );
 ?>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:24px 0;">
 	<tr>
@@ -88,7 +89,7 @@ $schedule_link = '' !== $access_url ? $access_url : $dashboard_url;
 							</ul>
 						<?php endif; ?>
 
-						<?php if ( TR_IremboPay_Settings::is_enabled() && TR_Payment::has_resolvable_product_code( $invoice ) ) : ?>
+						<?php if ( '' !== $pay_url && TR_IremboPay_Settings::is_enabled() && TR_Payment::has_resolvable_product_code( $invoice ) ) : ?>
 							<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
 								<?php esc_html_e( 'You can pay online right now with IremboPay, or keep paying cash, bank transfer or mobile money as usual — just let us know once you\'ve paid so we can mark it.', 'tangnest-robotics' ); ?>
 							</p>
@@ -96,7 +97,7 @@ $schedule_link = '' !== $access_url ? $access_url : $dashboard_url;
 							<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0;">
 								<tr>
 									<td style="border-radius:6px;background:#12c4c4;">
-										<a href="<?php echo esc_url( TR_Payment::payment_page_url( (int) $invoice->id ) ); ?>" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">
+										<a href="<?php echo esc_url( $pay_url ); ?>" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">
 											<?php esc_html_e( 'Pay now', 'tangnest-robotics' ); ?>
 										</a>
 									</td>
@@ -108,9 +109,9 @@ $schedule_link = '' !== $access_url ? $access_url : $dashboard_url;
 							</p>
 						<?php endif; ?>
 
-						<?php if ( ! empty( $schedule_link ) ) : ?>
+						<?php if ( ! empty( $access_url ) ) : ?>
 							<p style="margin:16px 0 0;">
-								<a href="<?php echo esc_url( $schedule_link ); ?>" style="font-size:14px;color:#12c4c4;text-decoration:underline;">
+								<a href="<?php echo esc_url( $access_url ); ?>" style="font-size:14px;color:#12c4c4;text-decoration:underline;">
 									<?php esc_html_e( 'View your payment schedule', 'tangnest-robotics' ); ?>
 								</a>
 							</p>

@@ -17,6 +17,12 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.7.0
+- Fix: Pay now and payment schedule links in emails now sign the parent in automatically
+- New: Emails (and the routine WhatsApp payment reminder) carry their own message token, independent of the WhatsApp access link
+- New: Message links are valid for 14 days and refresh with every automatic send
+- New: Families screen shows the access link and message link statuses separately
+
 ### v0.6.2
 - New: Delete row action and bulk action on the Invoices screen, restricted to cancelled invoices only — never available on pending, overdue, paid or waived invoices, re-checked server-side regardless of what was rendered
 - Every deletion is logged at info level with the invoice ID, family ID, period, amount and the admin who did it

@@ -51,12 +51,14 @@ class TR_Notifications {
 			return false;
 		}
 
-		$reset_url     = network_site_url( 'wp-login.php?action=rp&key=' . $key . '&login=' . rawurlencode( $user->user_login ), 'login' );
-		$dashboard_url = TR_Parent_Dashboard::get_url();
-		$students      = self::get_family_students_for_email( $family_id );
-		$access_url    = TR_Access_Tokens::get_or_generate_url( $family_id );
+		$reset_url  = network_site_url( 'wp-login.php?action=rp&key=' . $key . '&login=' . rawurlencode( $user->user_login ), 'login' );
+		$students   = self::get_family_students_for_email( $family_id );
+		// Message-token slot (spec v0.7.0) — separate from the device-bound
+		// access token, so this automatic send can never invalidate a link
+		// the admin explicitly sent by WhatsApp or email.
+		$access_url = TR_Message_Tokens::generate_url( $family_id );
 
-		$body = self::render_welcome_template( $user, $reset_url, $dashboard_url, $students, $access_url );
+		$body = self::render_welcome_template( $user, $reset_url, $students, $access_url );
 		$sent = self::send(
 			$user->user_email,
 			__( 'Welcome to Tangnest Robotics — set up your account', 'tangnest-robotics' ),
@@ -118,7 +120,7 @@ class TR_Notifications {
 		return $rows;
 	}
 
-	private static function render_welcome_template( WP_User $user, string $reset_url, string $dashboard_url, array $students, string $access_url ): string {
+	private static function render_welcome_template( WP_User $user, string $reset_url, array $students, string $access_url ): string {
 		ob_start();
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/welcome.php';
 		return ob_get_clean();
@@ -179,11 +181,12 @@ class TR_Notifications {
 			return false;
 		}
 
-		$dashboard_url = TR_Parent_Dashboard::get_url();
 		$students      = self::decode_invoice_snapshot( $invoice );
-		$access_url    = TR_Access_Tokens::get_reusable_url_only( $family_id );
+		$message_token = TR_Message_Tokens::generate( $family_id );
+		$access_url    = TR_Message_Tokens::build_url( $message_token );
+		$pay_url       = self::pay_url_with_token( (int) $invoice->id, $message_token );
 
-		$body = self::render_invoice_issued_template( $user, $invoice, $students, $dashboard_url, $access_url );
+		$body = self::render_invoice_issued_template( $user, $invoice, $students, $access_url, $pay_url );
 
 		return self::send(
 			$user->user_email,
@@ -217,16 +220,17 @@ class TR_Notifications {
 			return false;
 		}
 
-		$dashboard_url = TR_Parent_Dashboard::get_url();
 		$students      = self::decode_invoice_snapshot( $invoice );
-		$access_url    = TR_Access_Tokens::get_reusable_url_only( (int) $family->id );
+		$message_token = TR_Message_Tokens::generate( (int) $family->id );
+		$access_url    = TR_Message_Tokens::build_url( $message_token );
+		$pay_url       = self::pay_url_with_token( (int) $invoice->id, $message_token );
 
 		$days_overdue = 0;
 		if ( 'overdue' === $invoice->status ) {
 			$days_overdue = max( 0, (int) floor( ( current_time( 'timestamp' ) - strtotime( $invoice->due_date ) ) / DAY_IN_SECONDS ) );
 		}
 
-		$body = self::render_reminder_template( $user, $invoice, $students, $dashboard_url, $days_overdue, $access_url );
+		$body = self::render_reminder_template( $user, $invoice, $students, $days_overdue, $access_url, $pay_url );
 
 		return self::send(
 			$user->user_email,
@@ -249,16 +253,30 @@ class TR_Notifications {
 		return is_array( $decoded ) ? $decoded : [];
 	}
 
-	private static function render_invoice_issued_template( WP_User $user, object $invoice, array $students, string $dashboard_url, string $access_url ): string {
+	private static function render_invoice_issued_template( WP_User $user, object $invoice, array $students, string $access_url, string $pay_url ): string {
 		ob_start();
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/invoice-issued.php';
 		return ob_get_clean();
 	}
 
-	private static function render_reminder_template( WP_User $user, object $invoice, array $students, string $dashboard_url, int $days_overdue, string $access_url ): string {
+	private static function render_reminder_template( WP_User $user, object $invoice, array $students, int $days_overdue, string $access_url, string $pay_url ): string {
 		ob_start();
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/reminder.php';
 		return ob_get_clean();
+	}
+
+	/**
+	 * TR_Payment::payment_page_url() builds the bare ?tr_pay=... URL used
+	 * in-session from the dashboard, where no token is needed. A message
+	 * carries no session, so its Pay now link must also carry tr_access
+	 * alongside tr_pay — TR_Parent_Dashboard::maybe_handle_access_token()
+	 * signs the parent in from that token and preserves tr_pay across its
+	 * redirect, landing them straight on the payment flow in one tap.
+	 */
+	private static function pay_url_with_token( int $invoice_id, string $token ): string {
+		$base = TR_Payment::payment_page_url( $invoice_id );
+
+		return '' !== $base ? add_query_arg( 'tr_access', $token, $base ) : '';
 	}
 
 	/**
@@ -284,10 +302,10 @@ class TR_Notifications {
 			return false;
 		}
 
-		$dashboard_url = TR_Parent_Dashboard::get_url();
-		$students      = self::decode_invoice_snapshot( $invoice );
+		$students   = self::decode_invoice_snapshot( $invoice );
+		$access_url = TR_Message_Tokens::generate_url( (int) $family->id );
 
-		$body = self::render_receipt_template( $user, $invoice, $students, $dashboard_url );
+		$body = self::render_receipt_template( $user, $invoice, $students, $access_url );
 
 		return self::send(
 			$user->user_email,
@@ -300,7 +318,7 @@ class TR_Notifications {
 		);
 	}
 
-	private static function render_receipt_template( WP_User $user, object $invoice, array $students, string $dashboard_url ): string {
+	private static function render_receipt_template( WP_User $user, object $invoice, array $students, string $access_url ): string {
 		ob_start();
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/receipt.php';
 		return ob_get_clean();

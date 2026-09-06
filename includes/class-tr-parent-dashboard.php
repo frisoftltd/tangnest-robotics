@@ -175,7 +175,13 @@ class TR_Parent_Dashboard {
 			self::flag_dead_token_notice();
 		}
 
-		$redirect_url = self::get_url();
+		// A Pay now link carries both tr_pay and tr_access in the same URL —
+		// the token itself must never survive the redirect, but tr_pay does,
+		// so the very next request (now signed in) lands straight on the
+		// payment flow instead of a second, separate login step.
+		$tr_pay       = isset( $_GET['tr_pay'] ) ? absint( $_GET['tr_pay'] ) : 0;
+		$redirect_url = $tr_pay > 0 ? add_query_arg( 'tr_pay', $tr_pay, self::get_url() ) : self::get_url();
+
 		TR_Logger::debug( 'maybe_handle_access_token redirecting', [ 'redirect_url' => $redirect_url ] );
 
 		wp_safe_redirect( $redirect_url );

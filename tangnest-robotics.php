@@ -3,7 +3,7 @@
  * Plugin Name:       Tangnest Robotics — Class & Payment Manager
  * Plugin URI:        https://github.com/frisoftltd/tangnest-robotics
  * Description:       Manages robotics class enrollment, family billing, and IremboPay payments for Tangnest. Standalone — does not require WooCommerce or Tutor LMS.
- * Version:           0.6.2
+ * Version:           0.7.0
  * Author:            Fri Soft Ltd
  * Author URI:        https://frisoft.rw
  * License:           GPL-2.0-or-later
@@ -15,8 +15,8 @@
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-define( 'TANGNEST_ROBOTICS_VERSION',     '0.6.2' );
-define( 'TANGNEST_ROBOTICS_DB_VERSION',  '0.6.0' );
+define( 'TANGNEST_ROBOTICS_VERSION',     '0.7.0' );
+define( 'TANGNEST_ROBOTICS_DB_VERSION',  '0.7.0' );
 define( 'TANGNEST_ROBOTICS_PLUGIN_FILE', __FILE__ );
 define( 'TANGNEST_ROBOTICS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
 define( 'TANGNEST_ROBOTICS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
@@ -27,6 +27,13 @@ define( 'TANGNEST_ROBOTICS_PLUGIN_URL',  plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'TR_ACCESS_LINK_UNUSED_EXPIRY_DAYS' ) ) { define( 'TR_ACCESS_LINK_UNUSED_EXPIRY_DAYS', 7 ); }
 if ( ! defined( 'TR_ACCESS_GRACE_WINDOW_MINUTES' ) )    { define( 'TR_ACCESS_GRACE_WINDOW_MINUTES', 120 ); }
 if ( ! defined( 'TR_ACCESS_MAX_DEVICES' ) )              { define( 'TR_ACCESS_MAX_DEVICES', 3 ); }
+
+// Independent second token slot (spec v0.7.0) for automatic sends —
+// invoice/reminder/welcome/receipt emails and the routine WhatsApp payment
+// reminder — kept entirely separate from the device-bound access token
+// above so an automatic send can never invalidate the admin's explicit
+// "Send access link" links, or vice versa.
+if ( ! defined( 'TR_MESSAGE_TOKEN_EXPIRY_DAYS' ) ) { define( 'TR_MESSAGE_TOKEN_EXPIRY_DAYS', 14 ); }
 
 final class Tangnest_Robotics {
 	private static ?Tangnest_Robotics $instance = null;
@@ -52,6 +59,7 @@ final class Tangnest_Robotics {
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-students.php';
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-enrollments.php';
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-access-tokens.php';
+		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-message-tokens.php';
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-notifications.php';
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-parent-dashboard.php';
 		require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-invoices.php';

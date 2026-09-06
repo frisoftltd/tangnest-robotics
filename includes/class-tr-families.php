@@ -295,12 +295,51 @@ class TR_Families {
 		$wpdb->query( $sql );
 	}
 
+	/**
+	 * Clears both token slots — the access token (marked 'revoked', same as
+	 * before) and the message token (fully nulled, since it has no status
+	 * column of its own to flag). A parent stuck after a revoke must have
+	 * neither link keep working.
+	 */
 	public static function revoke_access_token( int $family_id ): void {
 		global $wpdb;
 
 		$sql = $wpdb->prepare(
-			"UPDATE " . self::table() . " SET access_token_hash = NULL, access_token_status = %s, updated_at = %s WHERE id = %d",
+			"UPDATE " . self::table() . " SET access_token_hash = NULL, access_token_status = %s,
+			 message_token_hash = NULL, message_token_created = NULL, message_token_expires = NULL,
+			 message_token_last_used = NULL, message_token_use_count = 0, updated_at = %s WHERE id = %d",
 			[ 'revoked', current_time( 'mysql' ), $family_id ]
+		);
+		$wpdb->query( $sql );
+	}
+
+	/**
+	 * Overwrites this family's message token, invalidating any previous one
+	 * immediately — deliberate on every automatic send, see TR_Message_Tokens.
+	 */
+	public static function set_message_token( int $family_id, string $hash, string $created, string $expires ): void {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET message_token_hash = %s, message_token_created = %s, message_token_expires = %s, message_token_last_used = NULL, message_token_use_count = 0, updated_at = %s WHERE id = %d",
+			[ $hash, $created, $expires, current_time( 'mysql' ), $family_id ]
+		);
+		$wpdb->query( $sql );
+	}
+
+	public static function get_by_message_token_hash( string $hash ): ?object {
+		global $wpdb;
+		$row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM " . self::table() . " WHERE message_token_hash = %s", [ $hash ] ) );
+
+		return $row ?: null;
+	}
+
+	public static function record_message_token_use( int $family_id, string $last_used, int $use_count ): void {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET message_token_last_used = %s, message_token_use_count = %d, updated_at = %s WHERE id = %d",
+			[ $last_used, $use_count, current_time( 'mysql' ), $family_id ]
 		);
 		$wpdb->query( $sql );
 	}

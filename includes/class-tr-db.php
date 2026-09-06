@@ -116,11 +116,17 @@ class TR_DB {
 			access_token_use_count   TINYINT(3)   UNSIGNED NOT NULL DEFAULT 0,
 			access_token_status      VARCHAR(20)  NOT NULL DEFAULT 'unused',
 			access_token_expires     DATETIME     DEFAULT NULL,
+			message_token_hash       CHAR(64)     DEFAULT NULL,
+			message_token_created    DATETIME     DEFAULT NULL,
+			message_token_expires    DATETIME     DEFAULT NULL,
+			message_token_last_used  DATETIME     DEFAULT NULL,
+			message_token_use_count  SMALLINT UNSIGNED NOT NULL DEFAULT 0,
 			created_at               DATETIME     NOT NULL,
 			updated_at               DATETIME     NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY parent_user_id (parent_user_id),
 			UNIQUE KEY access_token_hash (access_token_hash),
+			UNIQUE KEY message_token_hash (message_token_hash),
 			KEY status (status)
 		) {$charset};" );
 

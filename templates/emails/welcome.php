@@ -2,8 +2,12 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 /**
  * Welcome email body. Included by TR_Notifications::render_welcome_template()
- * with $user (WP_User), $reset_url, $dashboard_url, $access_url and
- * $students (array of objects with ->name / ->program) already in scope.
+ * with $user (WP_User), $reset_url, $access_url and $students (array of
+ * objects with ->name / ->program) already in scope.
+ *
+ * $access_url carries a message token (spec v0.7.0) — freshly minted for
+ * this send, independent of the device-bound access token used by the
+ * admin's explicit "Send access link" actions.
  *
  * Table-based layout, inline CSS, max-width 600px — written to survive
  * being mangled by webmail clients that strip <style> blocks.
@@ -71,16 +75,9 @@ $first_name = $user->first_name ? $user->first_name : $user->display_name;
 						</p>
 
 						<?php if ( ! empty( $access_url ) ) : ?>
-							<p style="font-size:13px;line-height:1.6;color:#555555;margin:0 0 16px;">
+							<p style="font-size:13px;line-height:1.6;color:#555555;margin:0;">
 								<?php esc_html_e( 'Or open your page directly with this link — no password needed:', 'tangnest-robotics' ); ?><br>
 								<a href="<?php echo esc_url( $access_url ); ?>" style="color:#12c4c4;word-break:break-all;"><?php echo esc_html( $access_url ); ?></a>
-							</p>
-						<?php endif; ?>
-
-						<?php if ( ! empty( $dashboard_url ) ) : ?>
-							<p style="font-size:13px;line-height:1.6;color:#555555;margin:0;">
-								<?php esc_html_e( 'Once your password is set, visit your dashboard any time at:', 'tangnest-robotics' ); ?><br>
-								<a href="<?php echo esc_url( $dashboard_url ); ?>" style="color:#12c4c4;"><?php echo esc_html( $dashboard_url ); ?></a>
 							</p>
 						<?php endif; ?>
 					</td>

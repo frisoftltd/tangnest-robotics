@@ -4,8 +4,12 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * Payment receipt email. Included by
  * TR_Notifications::render_receipt_template() with $user (WP_User),
  * $invoice (object: period, amount, currency, paid_at, payment_method,
- * payment_reference), $students and $dashboard_url already in scope.
+ * payment_reference), $students and $access_url already in scope.
  * Same inline-CSS, table-safe, max-width 600px layout as welcome.php.
+ *
+ * $access_url carries a message token (spec v0.7.0), freshly minted for
+ * this send — every parent-facing link must carry one, this email is no
+ * exception.
  */
 $first_name = $user->first_name ? $user->first_name : $user->display_name;
 $paid_date  = $invoice->paid_at ? date_i18n( get_option( 'date_format' ), strtotime( $invoice->paid_at ) ) : '';
@@ -75,11 +79,11 @@ $paid_date  = $invoice->paid_at ? date_i18n( get_option( 'date_format' ), strtot
 							</ul>
 						<?php endif; ?>
 
-						<?php if ( ! empty( $dashboard_url ) ) : ?>
+						<?php if ( ! empty( $access_url ) ) : ?>
 							<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0;">
 								<tr>
 									<td style="border-radius:6px;background:#12c4c4;">
-										<a href="<?php echo esc_url( $dashboard_url ); ?>" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">
+										<a href="<?php echo esc_url( $access_url ); ?>" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">
 											<?php esc_html_e( 'View your payment schedule', 'tangnest-robotics' ); ?>
 										</a>
 									</td>

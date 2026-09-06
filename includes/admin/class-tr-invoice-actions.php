@@ -348,7 +348,13 @@ class TR_Invoice_Actions {
 	 * Reuses TR_Notifications::build_whatsapp_message_url() — the same
 	 * phone-conversion and %0a-safe encoding the access-link WhatsApp send
 	 * already relies on — with a reminder-specific message instead of an
-	 * access link. Never sends a password or access token over WhatsApp.
+	 * access link.
+	 *
+	 * Carries a message token (spec v0.7.0), not the primary device-bound
+	 * access token — this is a routine, high-frequency automatic send, and
+	 * using the primary slot would invalidate whatever link the admin's
+	 * own "Send access link (WhatsApp)" action deliberately sent. That is
+	 * the exact collision the message-token slot exists to remove.
 	 */
 	private static function build_reminder_whatsapp_url( object $invoice ): string {
 		$family = TR_Families::get( (int) $invoice->family_id );
@@ -361,8 +367,8 @@ class TR_Invoice_Actions {
 			return '';
 		}
 
-		$phone         = get_user_meta( (int) $family->parent_user_id, 'phone_number', true );
-		$dashboard_url = TR_Parent_Dashboard::get_url();
+		$phone      = get_user_meta( (int) $family->parent_user_id, 'phone_number', true );
+		$access_url = TR_Message_Tokens::generate_url( (int) $family->id );
 
 		$lines = [
 			sprintf( __( 'Hello %s,', 'tangnest-robotics' ), $user->display_name ),
@@ -374,9 +380,9 @@ class TR_Invoice_Actions {
 			),
 		];
 
-		if ( '' !== $dashboard_url ) {
+		if ( '' !== $access_url ) {
 			$lines[] = __( 'You can view your payment schedule here:', 'tangnest-robotics' );
-			$lines[] = $dashboard_url;
+			$lines[] = $access_url;
 		}
 
 		$url = TR_Notifications::build_whatsapp_message_url( $phone, $lines );

@@ -143,35 +143,6 @@ class TR_Access_Tokens {
 	}
 
 	/**
-	 * Reuse-only lookup for automatic emails (invoice-issued, reminder) that
-	 * must NEVER mint a token — unlike get_or_generate_url(), this returns
-	 * '' instead of falling back to generate() when the current token isn't
-	 * reusable or its raw value isn't (or is no longer) cached. In practice
-	 * the cache TTL is capped to the grace window, so a scheduled reminder
-	 * firing hours or days after the link was last sent will usually find
-	 * nothing cached and correctly return '' — callers must fall back to
-	 * the plain dashboard URL in that case.
-	 */
-	public static function get_reusable_url_only( int $family_id ): string {
-		$family = TR_Families::get( $family_id );
-
-		if ( ! $family || ! self::is_reusable( $family ) ) {
-			return '';
-		}
-
-		$cached_token = get_transient( self::raw_token_cache_key( $family_id ) );
-		if ( ! is_string( $cached_token ) || '' === $cached_token ) {
-			return '';
-		}
-
-		if ( hash( 'sha256', $cached_token ) !== $family->access_token_hash ) {
-			return '';
-		}
-
-		return self::build_url( $cached_token );
-	}
-
-	/**
 	 * Always mints a fresh token regardless of reusability — the explicit
 	 * "Regenerate link" admin action, and the escape hatch for a lost
 	 * phone or cleared browser.
@@ -196,6 +167,11 @@ class TR_Access_Tokens {
 	 * unknown, expired, revoked, window-closed and privileged-account all
 	 * just fail, so the dashboard can show one generic "link is no longer
 	 * active" message without leaking which check failed.
+	 *
+	 * Tries the access-token hash first, then the message-token hash
+	 * (spec v0.7.0) — the two slots share the same URL parameter and the
+	 * same rate limiting, so a guesser probing either one trips the same
+	 * IP block.
 	 */
 	public static function validate_and_consume( string $token ): int {
 		TR_Logger::debug( 'Access-link validation attempt', [
@@ -227,38 +203,53 @@ class TR_Access_Tokens {
 			return 0;
 		}
 
-		$hash   = hash( 'sha256', $token );
+		$hash = hash( 'sha256', $token );
+
 		$family = TR_Families::get_by_access_token_hash( $hash );
-
-		TR_Logger::debug( 'Access-link family lookup', [
-			'hash_found'              => null !== $family,
-			'family_id'               => $family->id ?? null,
-			'access_token_status'     => $family->access_token_status ?? null,
-			'access_token_use_count'  => $family->access_token_use_count ?? null,
-			'access_token_first_used' => $family->access_token_first_used ?? null,
-			'access_token_expires'    => $family->access_token_expires ?? null,
-		] );
-
-		if ( null === $family ) {
-			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'hash_not_found' ] );
-			self::record_failure();
-			return 0;
+		if ( null !== $family ) {
+			return self::validate_access_slot( $family );
 		}
 
+		$family = TR_Families::get_by_message_token_hash( $hash );
+		if ( null !== $family ) {
+			return self::validate_message_slot( $family );
+		}
+
+		TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'hash_not_found' ] );
+		self::record_failure();
+		return 0;
+	}
+
+	/**
+	 * Device-bound / grace-window / use-cap validation for the primary
+	 * access-token slot — unchanged in substance from pre-0.7.0, only the
+	 * log lines now carry token_type so a rejection can be told apart from
+	 * a message-token one.
+	 */
+	private static function validate_access_slot( object $family ): int {
+		TR_Logger::debug( 'Access-link family lookup', [
+			'token_type'              => 'access',
+			'family_id'               => $family->id,
+			'access_token_status'     => $family->access_token_status,
+			'access_token_use_count'  => $family->access_token_use_count,
+			'access_token_first_used' => $family->access_token_first_used,
+			'access_token_expires'    => $family->access_token_expires,
+		] );
+
 		if ( self::STATUS_REVOKED === $family->access_token_status ) {
-			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'status_revoked', 'family_id' => $family->id ] );
+			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'status_revoked', 'family_id' => $family->id, 'token_type' => 'access' ] );
 			self::record_failure();
 			return 0;
 		}
 
 		if ( self::STATUS_CONSUMED === $family->access_token_status ) {
-			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'status_consumed', 'family_id' => $family->id ] );
+			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'status_consumed', 'family_id' => $family->id, 'token_type' => 'access' ] );
 			self::record_failure();
 			return 0;
 		}
 
 		if ( empty( $family->access_token_expires ) || strtotime( $family->access_token_expires ) < current_time( 'timestamp' ) ) {
-			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'expired', 'family_id' => $family->id ] );
+			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'expired', 'family_id' => $family->id, 'token_type' => 'access' ] );
 			self::record_failure();
 			return 0;
 		}
@@ -269,7 +260,7 @@ class TR_Access_Tokens {
 			$devices_full   = (int) $family->access_token_use_count >= self::max_devices();
 
 			if ( $window_passed ) {
-				TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'grace_window_passed', 'family_id' => $family->id ] );
+				TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'grace_window_passed', 'family_id' => $family->id, 'token_type' => 'access' ] );
 				TR_Families::set_token_status( (int) $family->id, self::STATUS_CONSUMED );
 				delete_transient( self::raw_token_cache_key( (int) $family->id ) );
 				self::record_failure();
@@ -277,7 +268,7 @@ class TR_Access_Tokens {
 			}
 
 			if ( $devices_full ) {
-				TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'device_cap_reached', 'family_id' => $family->id ] );
+				TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'device_cap_reached', 'family_id' => $family->id, 'token_type' => 'access' ] );
 				TR_Families::set_token_status( (int) $family->id, self::STATUS_CONSUMED );
 				delete_transient( self::raw_token_cache_key( (int) $family->id ) );
 				self::record_failure();
@@ -285,57 +276,15 @@ class TR_Access_Tokens {
 			}
 		}
 
-		$user = get_userdata( (int) $family->parent_user_id );
-
-		if ( ! $user ) {
-			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'no_parent_user', 'family_id' => $family->id ] );
-			self::record_failure();
-			return 0;
-		}
-
-		if ( self::user_is_privileged( $user ) ) {
-			TR_Logger::warning( 'Access-link rejected', [
-				'reason'    => 'privileged_user',
-				'family_id' => $family->id,
-				'user_id'   => $family->parent_user_id,
-			] );
-			self::record_failure();
-			return 0;
-		}
-
-		if ( 'active' !== $family->status ) {
-			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'family_inactive', 'family_id' => $family->id ] );
-			self::record_failure();
-			return 0;
-		}
-
-		// Tripwire only — every branch above already covers $family/$user
-		// being unusable, so this is provably unreachable given the checks
-		// that precede it. Left in so a future edit that removes/reorders
-		// one of those checks fails loudly in the log instead of silently.
-		if ( null === $family || ! $user ) {
-			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'unlabelled_fallthrough' ] );
+		$user = self::eligible_user( $family, 'access' );
+		if ( null === $user ) {
 			return 0;
 		}
 
 		// The device slot is only spent once the login actually happens —
-		// wp_set_auth_cookie() runs first, and the increment follows it,
-		// never the other way round.
-		wp_set_current_user( $user->ID );
-
-		$headers_already_sent = headers_sent( $sent_file, $sent_line );
-		TR_Logger::debug( 'Before wp_set_auth_cookie', [
-			'headers_sent' => $headers_already_sent,
-			'sent_file'    => $headers_already_sent ? $sent_file : null,
-			'sent_line'    => $headers_already_sent ? $sent_line : null,
-		] );
-
-		wp_set_auth_cookie( $user->ID, true );
-
-		TR_Logger::debug( 'After wp_set_auth_cookie', [
-			'is_user_logged_in' => is_user_logged_in(),
-			'current_user_id'   => get_current_user_id(),
-		] );
+		// sign-in runs first, and the increment follows it, never the
+		// other way round.
+		self::sign_in( $user );
 
 		$now           = current_time( 'mysql' );
 		$first_used    = $family->access_token_first_used ?: $now;
@@ -349,12 +298,93 @@ class TR_Access_Tokens {
 		}
 
 		TR_Logger::info( 'Access-link login', [
-			'family_id' => $family->id,
-			'use_count' => $new_use_count,
-			'ip'        => self::truncated_ip(),
+			'family_id'  => $family->id,
+			'token_type' => 'access',
+			'use_count'  => $new_use_count,
+			'ip'         => self::truncated_ip(),
 		] );
 
 		return $user->ID;
+	}
+
+	/**
+	 * The message-token slot: expiry only, no device binding, no grace
+	 * window, no use cap — see the TR_Message_Tokens class docblock for
+	 * why that is an acceptable trade for a link that only ever reaches
+	 * one automatic-send recipient and is replaced on every later send.
+	 */
+	private static function validate_message_slot( object $family ): int {
+		TR_Logger::debug( 'Access-link family lookup', [
+			'token_type'              => 'message',
+			'family_id'               => $family->id,
+			'message_token_expires'   => $family->message_token_expires,
+			'message_token_use_count' => $family->message_token_use_count,
+		] );
+
+		if ( empty( $family->message_token_expires ) || strtotime( $family->message_token_expires ) < current_time( 'timestamp' ) ) {
+			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'expired', 'family_id' => $family->id, 'token_type' => 'message' ] );
+			self::record_failure();
+			return 0;
+		}
+
+		$user = self::eligible_user( $family, 'message' );
+		if ( null === $user ) {
+			return 0;
+		}
+
+		self::sign_in( $user );
+
+		$now = current_time( 'mysql' );
+		TR_Families::record_message_token_use( (int) $family->id, $now, (int) $family->message_token_use_count + 1 );
+
+		TR_Logger::info( 'Access-link login', [
+			'family_id'  => $family->id,
+			'token_type' => 'message',
+			'ip'         => self::truncated_ip(),
+		] );
+
+		return $user->ID;
+	}
+
+	/**
+	 * Shared by both slots: the parent user must still exist, must not
+	 * hold any privileged capability (an admin's own account must never be
+	 * signable-in via a family link, whichever slot matched), and the
+	 * family itself must be active. Returns null (and records the
+	 * rejection + failure) on the first check that fails.
+	 */
+	private static function eligible_user( object $family, string $token_type ): ?WP_User {
+		$user = get_userdata( (int) $family->parent_user_id );
+
+		if ( ! $user ) {
+			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'no_parent_user', 'family_id' => $family->id, 'token_type' => $token_type ] );
+			self::record_failure();
+			return null;
+		}
+
+		if ( self::user_is_privileged( $user ) ) {
+			TR_Logger::warning( 'Access-link rejected', [
+				'reason'     => 'privileged_user',
+				'family_id'  => $family->id,
+				'user_id'    => $family->parent_user_id,
+				'token_type' => $token_type,
+			] );
+			self::record_failure();
+			return null;
+		}
+
+		if ( 'active' !== $family->status ) {
+			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'family_inactive', 'family_id' => $family->id, 'token_type' => $token_type ] );
+			self::record_failure();
+			return null;
+		}
+
+		return $user;
+	}
+
+	private static function sign_in( WP_User $user ): void {
+		wp_set_current_user( $user->ID );
+		wp_set_auth_cookie( $user->ID, true );
 	}
 
 	private static function user_is_privileged( WP_User $user ): bool {

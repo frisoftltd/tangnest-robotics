@@ -31,6 +31,7 @@ class TR_Families_Table extends WP_List_Table {
 			'balance'          => __( 'Balance', 'tangnest-robotics' ),
 			'last_payment'     => __( 'Last Payment', 'tangnest-robotics' ),
 			'link_status'      => __( 'Access Link', 'tangnest-robotics' ),
+			'message_link'     => __( 'Message Link', 'tangnest-robotics' ),
 			'status'           => __( 'Status', 'tangnest-robotics' ),
 		];
 	}
@@ -234,6 +235,16 @@ class TR_Families_Table extends WP_List_Table {
 		}
 
 		return $status_text . '<div class="tr-access-link-actions">' . $this->render_actions_html( $actions ) . '</div>';
+	}
+
+	/**
+	 * The message-token slot (spec v0.7.0) has no admin actions of its
+	 * own — it regenerates automatically on every automatic send, and
+	 * Revoke above already clears both slots at once. Just the status, so
+	 * an admin can tell at a glance which of the two a parent is stuck on.
+	 */
+	public function column_message_link( $item ): string {
+		return esc_html( TR_Message_Tokens::status_label( $item ) );
 	}
 
 	/**
