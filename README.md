@@ -17,6 +17,10 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.8.4
+- Fix: automatic emails and the reminder WhatsApp message now reuse the family's current message token while it's still valid instead of minting a new one on every send — every message sent within the 14-day window keeps working, not just the most recent one
+- Fix: a welcome email's "Set your password" link now falls back to signing the parent straight into the dashboard if its one-time reset key has already been used (e.g. because the email was resent) — same privileged-capability guard as every other passwordless login path, so an admin or instructor is never auto-signed-in this way
+
 ### v0.8.3
 - Changed: The INTYOZA LAB access-fees wording now appears in every parent-facing message, not just the welcome email — access-link email and WhatsApp, invoice-issued email, reminder email and WhatsApp, and the receipt email
 - The reminder WhatsApp message keeps its amount-and-period line alongside the new wording, rather than losing that data

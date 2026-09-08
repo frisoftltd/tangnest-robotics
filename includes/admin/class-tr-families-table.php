@@ -261,9 +261,11 @@ class TR_Families_Table extends WP_List_Table {
 
 	/**
 	 * The message-token slot (spec v0.7.0) has no admin actions of its
-	 * own — it regenerates automatically on every automatic send, and
-	 * Revoke above already clears both slots at once. Just the status, so
-	 * an admin can tell at a glance which of the two a parent is stuck on.
+	 * own — it mints itself automatically on the first automatic send and
+	 * is then reused by every later one for as long as it stays valid
+	 * (v0.8.4: see TR_Message_Tokens::get_or_generate()), and Revoke above
+	 * already clears both slots at once. Just the status, so an admin can
+	 * tell at a glance which of the two a parent is stuck on.
 	 */
 	public function column_message_link( $item ): string {
 		return esc_html( TR_Message_Tokens::status_label( $item ) );

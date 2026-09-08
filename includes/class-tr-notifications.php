@@ -51,12 +51,23 @@ class TR_Notifications {
 			return false;
 		}
 
-		$reset_url  = network_site_url( 'wp-login.php?action=rp&key=' . $key . '&login=' . rawurlencode( $user->user_login ), 'login' );
-		$students   = self::get_family_students_for_email( $family_id );
 		// Message-token slot (spec v0.7.0) — separate from the device-bound
 		// access token, so this automatic send can never invalidate a link
-		// the admin explicitly sent by WhatsApp or email.
-		$access_url = TR_Message_Tokens::generate_url( $family_id );
+		// the admin explicitly sent by WhatsApp or email. Reused (not
+		// reminted) while still valid, so a resend of this same email
+		// doesn't kill the link an earlier send already delivered — see
+		// TR_Message_Tokens::get_or_generate().
+		$message_token = TR_Message_Tokens::get_or_generate( $family_id );
+
+		// tr_access on this same URL is a fallback for once the one-time
+		// reset key above has been used or has expired (e.g. this is a
+		// resend) — TR_Parent_Dashboard::maybe_handle_reset_link_fallback()
+		// validates it on login_init and, if still good, signs the parent
+		// straight in and sends them to the dashboard regardless of what
+		// the reset key on its own would have done.
+		$reset_url  = network_site_url( 'wp-login.php?action=rp&key=' . $key . '&login=' . rawurlencode( $user->user_login ) . '&tr_access=' . rawurlencode( $message_token ), 'login' );
+		$students   = self::get_family_students_for_email( $family_id );
+		$access_url = TR_Message_Tokens::build_url( $message_token );
 
 		$body = self::render_welcome_template( $user, $reset_url, $students, $access_url );
 		$sent = self::send(
@@ -186,7 +197,7 @@ class TR_Notifications {
 		}
 
 		$students      = self::decode_invoice_snapshot( $invoice );
-		$message_token = TR_Message_Tokens::generate( $family_id );
+		$message_token = TR_Message_Tokens::get_or_generate( $family_id );
 		$access_url    = TR_Message_Tokens::build_url( $message_token );
 		$pay_url       = self::pay_url_with_token( (int) $invoice->id, $message_token );
 
@@ -225,7 +236,7 @@ class TR_Notifications {
 		}
 
 		$students      = self::decode_invoice_snapshot( $invoice );
-		$message_token = TR_Message_Tokens::generate( (int) $family->id );
+		$message_token = TR_Message_Tokens::get_or_generate( (int) $family->id );
 		$access_url    = TR_Message_Tokens::build_url( $message_token );
 		$pay_url       = self::pay_url_with_token( (int) $invoice->id, $message_token );
 
@@ -307,7 +318,7 @@ class TR_Notifications {
 		}
 
 		$students   = self::decode_invoice_snapshot( $invoice );
-		$access_url = TR_Message_Tokens::generate_url( (int) $family->id );
+		$access_url = TR_Message_Tokens::get_or_generate_url( (int) $family->id );
 
 		$body = self::render_receipt_template( $user, $invoice, $students, $access_url );
 

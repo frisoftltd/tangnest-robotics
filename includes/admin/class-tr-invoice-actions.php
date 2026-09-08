@@ -442,7 +442,7 @@ class TR_Invoice_Actions {
 		}
 
 		$phone      = get_user_meta( (int) $family->parent_user_id, 'phone_number', true );
-		$access_url = TR_Message_Tokens::generate_url( (int) $family->id );
+		$access_url = TR_Message_Tokens::get_or_generate_url( (int) $family->id );
 
 		$lines = [
 			sprintf( __( 'Hello %s,', 'tangnest-robotics' ), $user->display_name ),

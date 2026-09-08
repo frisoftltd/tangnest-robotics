@@ -13,9 +13,28 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * Deliberately much simpler than TR_Access_Tokens: no device binding, no
  * grace window, no use cap. Those exist to stop a forwarded WhatsApp link
  * granting permanent access; a message token only ever reaches the one
- * parent an automatic send was addressed to, and a 14-day expiry plus
- * "every send mints a fresh one" covers the same ground without the
- * failure modes that cost a week of debugging in v0.5.0.
+ * parent an automatic send was addressed to, and a 14-day expiry covers
+ * the same ground without those failure modes.
+ *
+ * v0.8.4: every automatic send used to mint a brand new token, which
+ * meant only the MOST RECENT message's links still worked — every earlier
+ * email or WhatsApp message a parent hadn't gotten to yet went dead the
+ * moment a newer one was sent. get_or_generate()/get_or_generate_url()
+ * fix that: a still-valid token is reused as-is, so every message sent
+ * within the 14-day window keeps working, not just the latest one.
+ * generate() itself is unchanged (always mints fresh) and is now reserved
+ * for get_or_generate()'s own use and any caller that genuinely wants a
+ * forced-fresh token.
+ *
+ * Reuse requires recovering the RAW token from a later request, which the
+ * stored SHA-256 hash alone can never do — so the raw value is now cached
+ * in a transient for exactly as long as the token itself is valid
+ * (expiry_days()), the same "cache the raw value, verify it against the
+ * stored hash before trusting it" pattern TR_Access_Tokens already uses
+ * for its own (much shorter) grace-window reuse cache. If that transient
+ * is ever missing when a still-valid hash exists (e.g. an evicted object
+ * cache), get_or_generate() mints a fresh token rather than fail — the
+ * same fallback TR_Access_Tokens takes in the equivalent situation.
  *
  * The admin's explicit "Send access link" actions (Email and WhatsApp)
  * are untouched by any of this — they keep using TR_Access_Tokens, on
@@ -29,11 +48,9 @@ class TR_Message_Tokens {
 	}
 
 	/**
-	 * Always mints a fresh token — regenerating on every automatic send is
-	 * deliberate, not a bug: a parent acts on the most recent message, and
-	 * an older one going stale is expected. Never cached anywhere; the raw
-	 * value only exists for the lifetime of the request that builds the
-	 * message it's embedded in, so it never sits in wp_options at all.
+	 * Always mints a fresh token, overwriting (and thereby invalidating)
+	 * any existing one for this family — see get_or_generate() for the
+	 * reuse-aware version every automatic send should actually call.
 	 */
 	public static function generate( int $family_id ): string {
 		$token = bin2hex( random_bytes( 32 ) );
@@ -43,6 +60,7 @@ class TR_Message_Tokens {
 		$expires = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) + self::expiry_days() * DAY_IN_SECONDS );
 
 		TR_Families::set_message_token( $family_id, $hash, $now, $expires );
+		set_transient( self::raw_token_cache_key( $family_id ), $token, self::expiry_days() * DAY_IN_SECONDS );
 
 		return $token;
 	}
@@ -57,13 +75,75 @@ class TR_Message_Tokens {
 	}
 
 	/**
-	 * What every automatic send should call: mints a fresh token and
-	 * returns the ready-to-use dashboard URL in one step. '' only when no
-	 * dashboard page is configured at all — callers must handle that the
-	 * same way they always have (no link rendered).
+	 * True when the family's current message token is still usable as-is —
+	 * unset or expired tokens are never reusable; there is no status column
+	 * to check beyond that (see the class docblock for why this slot has no
+	 * device/grace/use-cap concept the way TR_Access_Tokens does).
+	 */
+	public static function is_reusable( object $family ): bool {
+		if ( empty( $family->message_token_hash ) ) {
+			return false;
+		}
+
+		$expires_ts = $family->message_token_expires ? strtotime( $family->message_token_expires ) : 0;
+
+		return $expires_ts > current_time( 'timestamp' );
+	}
+
+	/**
+	 * What every automatic send should call: reuses the family's current
+	 * token when it's still valid, otherwise mints a fresh one. This is
+	 * what stops a second (or third, or tenth) automatic send from
+	 * invalidating the links already delivered by earlier ones.
+	 *
+	 * The cached raw value is untrusted until checked against the DB hash —
+	 * a stale cache entry would otherwise hand out a link for a token that
+	 * no longer matches what's stored. A mismatch here always means
+	 * something is wrong, so it's logged at error level, same as the
+	 * equivalent check in TR_Access_Tokens::get_or_generate_url().
+	 */
+	public static function get_or_generate( int $family_id ): string {
+		$family = TR_Families::get( $family_id );
+
+		if ( $family && self::is_reusable( $family ) ) {
+			$cached_token = get_transient( self::raw_token_cache_key( $family_id ) );
+			if ( is_string( $cached_token ) && '' !== $cached_token ) {
+				if ( hash( 'sha256', $cached_token ) === $family->message_token_hash ) {
+					return $cached_token;
+				}
+
+				TR_Logger::error( 'Cached message token does not match stored hash — discarding stale cache', [
+					'family_id' => $family_id,
+				] );
+				delete_transient( self::raw_token_cache_key( $family_id ) );
+			}
+		}
+
+		return self::generate( $family_id );
+	}
+
+	/**
+	 * Reuse-aware convenience wrapper, returning the ready-to-use dashboard
+	 * URL in one step. '' only when no dashboard page is configured at
+	 * all — callers must handle that the same way they always have (no
+	 * link rendered).
+	 */
+	public static function get_or_generate_url( int $family_id ): string {
+		return self::build_url( self::get_or_generate( $family_id ) );
+	}
+
+	/**
+	 * Always mints a fresh token and returns the ready-to-use dashboard
+	 * URL in one step. Kept for any caller that genuinely wants a
+	 * forced-fresh token rather than reuse — not currently called by any
+	 * automatic send (see get_or_generate_url() for that).
 	 */
 	public static function generate_url( int $family_id ): string {
 		return self::build_url( self::generate( $family_id ) );
+	}
+
+	private static function raw_token_cache_key( int $family_id ): string {
+		return 'tr_msg_raw_' . $family_id;
 	}
 
 	/**

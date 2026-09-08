@@ -22,6 +22,7 @@ class TR_Parent_Dashboard {
 		add_filter( 'login_redirect', [ $this, 'login_redirect' ], 10, 3 );
 		add_action( 'template_redirect', [ $this, 'maybe_handle_access_token' ] );
 		add_action( 'after_password_reset', [ $this, 'maybe_auto_login_after_reset' ], 10, 2 );
+		add_action( 'login_init', [ $this, 'maybe_handle_reset_link_fallback' ] );
 	}
 
 	public static function get_url(): string {
@@ -329,6 +330,52 @@ class TR_Parent_Dashboard {
 
 		wp_set_current_user( $user->ID );
 		wp_set_auth_cookie( $user->ID, true );
+
+		wp_safe_redirect( $dashboard_url );
+		exit;
+	}
+
+	/**
+	 * The WordPress password-reset key in a welcome email's "Set your
+	 * password" link is single-use — resending that email (or a parent
+	 * clicking an old copy after already setting a password) leaves a dead
+	 * key with no way to change that without weakening resets for every
+	 * other user on this shared LMS site. TR_Notifications::send_welcome_email()
+	 * appends the message token to that same URL as a fallback; this
+	 * validates it here, before wp-login.php gets anywhere near its own
+	 * (possibly already-dead) key handling.
+	 *
+	 * Deliberately unconditional once the token validates — sign in and
+	 * redirect happen regardless of whether the reset key on this same
+	 * request would still have worked on its own, so every copy of the
+	 * welcome email a parent has (old or new) lands them in the same
+	 * working place.
+	 *
+	 * Reuses TR_Access_Tokens::validate_and_consume() rather than
+	 * duplicating its checks — that method already tries the message-token
+	 * hash (which is what this URL actually carries) and applies the exact
+	 * same privileged-capability guard, rate limiting and family-status
+	 * check as every other passwordless login path in the plugin. An
+	 * admin or instructor account is never auto-signed-in this way.
+	 */
+	public function maybe_handle_reset_link_fallback(): void {
+		if ( ! isset( $_GET['tr_access'] ) ) {
+			return;
+		}
+
+		$token = is_string( $_GET['tr_access'] ) ? sanitize_text_field( wp_unslash( $_GET['tr_access'] ) ) : '';
+
+		$user_id = TR_Access_Tokens::validate_and_consume( $token );
+		if ( $user_id <= 0 ) {
+			// Invalid, expired or privileged — fall through to WordPress's
+			// own reset-key handling for the rest of this page load.
+			return;
+		}
+
+		$dashboard_url = self::get_url();
+		if ( '' === $dashboard_url ) {
+			return;
+		}
 
 		wp_safe_redirect( $dashboard_url );
 		exit;
