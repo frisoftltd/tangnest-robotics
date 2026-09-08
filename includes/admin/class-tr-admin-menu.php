@@ -416,7 +416,7 @@ class TR_Admin_Menu {
 
 		$lines = [
 			sprintf( __( 'Hello %s,', 'tangnest-robotics' ), $user->display_name ),
-			__( 'Here is your Tangnest Robotics parent page. It shows your children and their class progress.', 'tangnest-robotics' ),
+			__( 'This is your Tangnest Robotics parent account. From here, you’ll be able to manage and pay your child’s INTYOZA LAB access fees.', 'tangnest-robotics' ),
 			$access_url,
 			__( 'Open it on the phone you want to use. The link stops working after a short while — if you lose it, just ask us for a new one.', 'tangnest-robotics' ),
 		];

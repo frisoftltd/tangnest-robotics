@@ -446,6 +446,7 @@ class TR_Invoice_Actions {
 
 		$lines = [
 			sprintf( __( 'Hello %s,', 'tangnest-robotics' ), $user->display_name ),
+			__( 'This is your Tangnest Robotics parent account. From here, you’ll be able to manage and pay your child’s INTYOZA LAB access fees.', 'tangnest-robotics' ),
 			sprintf(
 				/* translators: 1: amount and currency, 2: billing period */
 				__( 'This is a reminder that %1$s is due for your Tangnest Robotics payment (%2$s).', 'tangnest-robotics' ),

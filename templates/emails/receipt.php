@@ -36,7 +36,7 @@ $paid_date  = $invoice->paid_at ? date_i18n( get_option( 'date_format' ), strtot
 						</p>
 
 						<p style="font-size:15px;line-height:1.6;margin:0 0 20px;">
-							<?php esc_html_e( 'Thank you — your payment has been received.', 'tangnest-robotics' ); ?>
+							<?php esc_html_e( 'This is your Tangnest Robotics parent account. From here, you’ll be able to manage and pay your child’s INTYOZA LAB access fees.', 'tangnest-robotics' ); ?>
 						</p>
 
 						<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 20px;border:1px solid #b6ecec;border-radius:8px;background:#e6fbfb;">

@@ -17,6 +17,10 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.8.3
+- Changed: The INTYOZA LAB access-fees wording now appears in every parent-facing message, not just the welcome email — access-link email and WhatsApp, invoice-issued email, reminder email and WhatsApp, and the receipt email
+- The reminder WhatsApp message keeps its amount-and-period line alongside the new wording, rather than losing that data
+
 ### v0.8.2
 - New: A parent who sets their password via the welcome email's reset link is now signed in automatically and sent to the parent dashboard, instead of having to log in again right after proving control of the account
 - The same privileged-capability guard as the passwordless access links applies — an admin or instructor account is never auto-signed-in this way

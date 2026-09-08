@@ -41,13 +41,7 @@ $is_overdue = $days_overdue > 0;
 						</p>
 
 						<p style="font-size:15px;line-height:1.6;margin:0 0 20px;">
-							<?php
-							if ( $is_overdue ) {
-								esc_html_e( 'This is a reminder that a payment is now overdue on your Tangnest Robotics account.', 'tangnest-robotics' );
-							} else {
-								esc_html_e( 'This is a reminder that a payment is due soon on your Tangnest Robotics account.', 'tangnest-robotics' );
-							}
-							?>
+							<?php esc_html_e( 'This is your Tangnest Robotics parent account. From here, you’ll be able to manage and pay your child’s INTYOZA LAB access fees.', 'tangnest-robotics' ); ?>
 						</p>
 
 						<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 20px;border:1px solid <?php echo $is_overdue ? '#f6c9c4' : '#e2e5eb'; ?>;border-radius:8px;background:<?php echo $is_overdue ? '#fdeaea' : '#ffffff'; ?>;">
