@@ -17,6 +17,10 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.8.2
+- New: A parent who sets their password via the welcome email's reset link is now signed in automatically and sent to the parent dashboard, instead of having to log in again right after proving control of the account
+- The same privileged-capability guard as the passwordless access links applies — an admin or instructor account is never auto-signed-in this way
+
 ### v0.8.1
 - New: Admin can set the start and end dates each invoice covers, and the due date
 - New: Programme start and end dates on the family, respected by automatic billing

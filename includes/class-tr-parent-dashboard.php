@@ -21,6 +21,7 @@ class TR_Parent_Dashboard {
 		add_action( 'wp_enqueue_scripts', [ $this, 'maybe_enqueue_assets' ] );
 		add_filter( 'login_redirect', [ $this, 'login_redirect' ], 10, 3 );
 		add_action( 'template_redirect', [ $this, 'maybe_handle_access_token' ] );
+		add_action( 'after_password_reset', [ $this, 'maybe_auto_login_after_reset' ], 10, 2 );
 	}
 
 	public static function get_url(): string {
@@ -295,5 +296,41 @@ class TR_Parent_Dashboard {
 		$dashboard_url = self::get_url();
 
 		return $dashboard_url ?: $redirect_to;
+	}
+
+	/**
+	 * A parent who just set their password via the welcome email's reset
+	 * link has already proven control of the account — WordPress's default
+	 * post-reset screen then makes them log in again anyway. This signs
+	 * them straight in and sends them to the dashboard instead.
+	 *
+	 * The capability guard is the same rule (and the same shared method) as
+	 * the passwordless access-token login — an admin or instructor account
+	 * must never be auto-signed-in this way, whatever password-reset flow
+	 * they happen to be going through. A user with no family record is left
+	 * to WordPress's normal behaviour entirely.
+	 *
+	 * Exits on success (a redirect back into wp-login.php's own flow would
+	 * just show the ordinary "log in" screen this is meant to skip).
+	 */
+	public function maybe_auto_login_after_reset( WP_User $user, string $new_pass ): void {
+		if ( null === TR_Families::get_by_user( $user->ID ) ) {
+			return;
+		}
+
+		if ( TR_Access_Tokens::user_is_privileged( $user ) ) {
+			return;
+		}
+
+		$dashboard_url = self::get_url();
+		if ( '' === $dashboard_url ) {
+			return;
+		}
+
+		wp_set_current_user( $user->ID );
+		wp_set_auth_cookie( $user->ID, true );
+
+		wp_safe_redirect( $dashboard_url );
+		exit;
 	}
 }

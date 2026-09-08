@@ -387,7 +387,13 @@ class TR_Access_Tokens {
 		wp_set_auth_cookie( $user->ID, true );
 	}
 
-	private static function user_is_privileged( WP_User $user ): bool {
+	/**
+	 * Public so other passwordless-login paths (e.g. the auto-sign-in after
+	 * a parent sets their password via the welcome email, see
+	 * TR_Parent_Dashboard::maybe_auto_login_after_reset()) can reuse the
+	 * exact same privileged-capability rule instead of duplicating the list.
+	 */
+	public static function user_is_privileged( WP_User $user ): bool {
 		foreach ( self::PRIVILEGED_CAPS as $cap ) {
 			if ( user_can( $user, $cap ) ) {
 				return true;
