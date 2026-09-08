@@ -36,7 +36,7 @@ $first_name = $user->first_name ? $user->first_name : $user->display_name;
 						</p>
 
 						<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
-							<?php esc_html_e( 'This is your Tangnest Robotics parent account. From here you’ll be able to see your child’s classes and progress.', 'tangnest-robotics' ); ?>
+							<?php esc_html_e( 'This is your Tangnest Robotics parent account. From here, you’ll be able to manage and pay your child’s INTYOZA LAB access fees.', 'tangnest-robotics' ); ?>
 						</p>
 
 						<?php if ( ! empty( $students ) ) : ?>

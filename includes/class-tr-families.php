@@ -31,8 +31,8 @@ class TR_Families {
 		$now = current_time( 'mysql' );
 
 		$sql = $wpdb->prepare(
-			"INSERT INTO " . self::table() . " (parent_user_id, monthly_amount, package_id, months_paid, currency, billing_day, status, notes, created_at, updated_at)
-			 VALUES (%d, %s, %d, %d, %s, %d, %s, %s, %s, %s)",
+			"INSERT INTO " . self::table() . " (parent_user_id, monthly_amount, package_id, months_paid, currency, billing_day, program_start_date, program_end_date, status, notes, created_at, updated_at)
+			 VALUES (%d, %s, %d, %d, %s, %d, %s, %s, %s, %s, %s, %s)",
 			[
 				absint( $data['parent_user_id'] ),
 				number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
@@ -40,6 +40,8 @@ class TR_Families {
 				absint( $data['months_paid'] ?? 0 ),
 				$data['currency'] ?? 'RWF',
 				absint( $data['billing_day'] ?? 0 ),
+				( $data['program_start_date'] ?? '' ) !== '' ? $data['program_start_date'] : null,
+				( $data['program_end_date'] ?? '' ) !== '' ? $data['program_end_date'] : null,
 				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
 				( $data['notes'] ?? '' ) !== '' ? sanitize_textarea_field( $data['notes'] ) : null,
 				$now,
@@ -56,13 +58,15 @@ class TR_Families {
 		$now = current_time( 'mysql' );
 
 		$sql = $wpdb->prepare(
-			"UPDATE " . self::table() . " SET monthly_amount = %s, package_id = %d, months_paid = %d, currency = %s, billing_day = %d, status = %s, notes = %s, updated_at = %s WHERE id = %d",
+			"UPDATE " . self::table() . " SET monthly_amount = %s, package_id = %d, months_paid = %d, currency = %s, billing_day = %d, program_start_date = %s, program_end_date = %s, status = %s, notes = %s, updated_at = %s WHERE id = %d",
 			[
 				number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
 				! empty( $data['package_id'] ) ? absint( $data['package_id'] ) : null,
 				absint( $data['months_paid'] ?? 0 ),
 				$data['currency'] ?? 'RWF',
 				absint( $data['billing_day'] ?? 0 ),
+				( $data['program_start_date'] ?? '' ) !== '' ? $data['program_start_date'] : null,
+				( $data['program_end_date'] ?? '' ) !== '' ? $data['program_end_date'] : null,
 				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
 				( $data['notes'] ?? '' ) !== '' ? sanitize_textarea_field( $data['notes'] ) : null,
 				$now,

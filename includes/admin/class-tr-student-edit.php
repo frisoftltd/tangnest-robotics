@@ -64,20 +64,6 @@ class TR_Student_Edit {
 			$errors[] = __( 'First and last name are required.', 'tangnest-robotics' );
 		}
 
-		$dob = '';
-		if ( ! empty( $_POST['date_of_birth'] ) ) {
-			$raw = sanitize_text_field( wp_unslash( $_POST['date_of_birth'] ) );
-			$dt  = DateTime::createFromFormat( 'Y-m-d', $raw );
-			if ( ! $dt || $dt->format( 'Y-m-d' ) !== $raw ) {
-				$errors[] = __( 'Date of birth is not a valid date.', 'tangnest-robotics' );
-			} else {
-				$dob = $raw;
-			}
-		}
-
-		$school = isset( $_POST['school'] ) ? sanitize_text_field( wp_unslash( $_POST['school'] ) ) : '';
-		$notes  = isset( $_POST['notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['notes'] ) ) : '';
-
 		if ( ! empty( $errors ) ) {
 			set_transient( self::state_key(), [ 'errors' => $errors, 'values' => wp_unslash( $_POST ) ], MINUTE_IN_SECONDS );
 			wp_safe_redirect( self::edit_url( $student_id ) );
@@ -119,14 +105,19 @@ class TR_Student_Edit {
 
 		$existing_student = $student_id > 0 ? TR_Students::get( $student_id ) : null;
 
+		// v0.8.1: a student record is name-only in the UI now — date of
+		// birth, school and notes are no longer asked for, but an existing
+		// row's values are carried through unchanged rather than wiped by a
+		// save that never mentions them. Both DB columns stay in place with
+		// their data intact; only the form stopped reading/writing them.
 		$student_data = [
 			'family_id'     => $family_id,
 			'first_name'    => $first_name,
 			'last_name'     => $last_name,
-			'date_of_birth' => $dob,
-			'school'        => $school,
+			'date_of_birth' => $existing_student->date_of_birth ?? '',
+			'school'        => $existing_student->school ?? '',
 			'status'        => $existing_student->status ?? 'active',
-			'notes'         => $notes,
+			'notes'         => $existing_student->notes ?? '',
 		];
 
 		if ( $existing_student ) {
@@ -256,18 +247,6 @@ class TR_Student_Edit {
 					<tr>
 						<th><label for="tr-last-name"><?php esc_html_e( 'Last name', 'tangnest-robotics' ); ?></label></th>
 						<td><input type="text" id="tr-last-name" name="last_name" class="regular-text" required value="<?php echo esc_attr( $posted['last_name'] ?? ( $student->last_name ?? '' ) ); ?>"></td>
-					</tr>
-					<tr>
-						<th><label for="tr-dob"><?php esc_html_e( 'Date of birth', 'tangnest-robotics' ); ?></label></th>
-						<td><input type="date" id="tr-dob" name="date_of_birth" value="<?php echo esc_attr( $posted['date_of_birth'] ?? ( $student->date_of_birth ?? '' ) ); ?>"></td>
-					</tr>
-					<tr>
-						<th><label for="tr-school"><?php esc_html_e( 'School', 'tangnest-robotics' ); ?></label></th>
-						<td><input type="text" id="tr-school" name="school" class="regular-text" value="<?php echo esc_attr( $posted['school'] ?? ( $student->school ?? '' ) ); ?>"></td>
-					</tr>
-					<tr>
-						<th><label for="tr-notes"><?php esc_html_e( 'Notes', 'tangnest-robotics' ); ?></label></th>
-						<td><textarea id="tr-notes" name="notes" rows="3" class="large-text"><?php echo esc_textarea( $posted['notes'] ?? ( $student->notes ?? '' ) ); ?></textarea></td>
 					</tr>
 				</table>
 

@@ -24,11 +24,13 @@ class TR_Invoices {
 		}
 
 		$sql = $wpdb->prepare(
-			"INSERT INTO " . self::table() . " (family_id, period, amount, currency, status, due_date, issued_at, student_snapshot, created_at, updated_at)
-			 VALUES (%d, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+			"INSERT INTO " . self::table() . " (family_id, period, period_start, period_end, amount, currency, status, due_date, issued_at, student_snapshot, created_at, updated_at)
+			 VALUES (%d, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
 			[
 				absint( $data['family_id'] ),
 				$data['period'],
+				( $data['period_start'] ?? '' ) !== '' ? $data['period_start'] : null,
+				( $data['period_end'] ?? '' ) !== '' ? $data['period_end'] : null,
 				number_format( (float) ( $data['amount'] ?? 0 ), 2, '.', '' ),
 				$data['currency'] ?? 'RWF',
 				in_array( $data['status'] ?? 'pending', self::STATUSES, true ) ? $data['status'] : 'pending',
@@ -374,5 +376,33 @@ class TR_Invoices {
 		}
 
 		return in_array( $stage, self::stages_sent( $invoice->reminder_stages_sent ), true );
+	}
+
+	/**
+	 * "6 Sep – 5 Oct" — the compact form used wherever an invoice row is
+	 * listed (admin table, dashboard). Empty when either date is unset, the
+	 * caller falls back to showing $invoice->period alone (v0.8.1: an
+	 * invoice created before period_start/period_end existed).
+	 */
+	public static function period_range_short( object $invoice ): string {
+		if ( empty( $invoice->period_start ) || empty( $invoice->period_end ) ) {
+			return '';
+		}
+
+		return date_i18n( 'j M', strtotime( $invoice->period_start ) ) . ' – ' . date_i18n( 'j M', strtotime( $invoice->period_end ) );
+	}
+
+	/**
+	 * "2026-09 (6 September – 5 October)" — the long form used in email
+	 * body copy. Falls back to the bare period when either date is unset.
+	 */
+	public static function period_label_with_range( object $invoice ): string {
+		if ( empty( $invoice->period_start ) || empty( $invoice->period_end ) ) {
+			return $invoice->period;
+		}
+
+		$range = date_i18n( 'j F', strtotime( $invoice->period_start ) ) . ' – ' . date_i18n( 'j F', strtotime( $invoice->period_end ) );
+
+		return $invoice->period . ' (' . $range . ')';
 	}
 }

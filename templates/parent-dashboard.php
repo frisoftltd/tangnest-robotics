@@ -185,7 +185,13 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 				<div class="tr-dashboard__invoice-list">
 					<?php foreach ( $invoices as $invoice ) : ?>
 						<div class="tr-dashboard__invoice-row">
-							<span class="tr-dashboard__invoice-period"><?php echo esc_html( $invoice->period ); ?></span>
+							<span class="tr-dashboard__invoice-period-group">
+								<span class="tr-dashboard__invoice-period"><?php echo esc_html( $invoice->period ); ?></span>
+								<?php $range = TR_Invoices::period_range_short( $invoice ); ?>
+								<?php if ( '' !== $range ) : ?>
+									<span class="tr-dashboard__invoice-range"><?php echo esc_html( $range ); ?></span>
+								<?php endif; ?>
+							</span>
 							<span class="tr-dashboard__invoice-amount"><?php echo esc_html( number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency ); ?></span>
 							<span class="tr-badge tr-badge--<?php echo esc_attr( $invoice->status ); ?>"><?php echo esc_html( ucfirst( $invoice->status ) ); ?></span>
 							<?php if ( TR_IremboPay_Settings::is_enabled() && in_array( $invoice->status, [ 'pending', 'overdue' ], true ) ) : ?>
@@ -208,7 +214,13 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 				<div class="tr-dashboard__invoice-list">
 					<?php foreach ( $paid_invoices as $invoice ) : ?>
 						<div class="tr-dashboard__invoice-row">
-							<span class="tr-dashboard__invoice-period"><?php echo esc_html( $invoice->period ); ?></span>
+							<span class="tr-dashboard__invoice-period-group">
+								<span class="tr-dashboard__invoice-period"><?php echo esc_html( $invoice->period ); ?></span>
+								<?php $range = TR_Invoices::period_range_short( $invoice ); ?>
+								<?php if ( '' !== $range ) : ?>
+									<span class="tr-dashboard__invoice-range"><?php echo esc_html( $range ); ?></span>
+								<?php endif; ?>
+							</span>
 							<span class="tr-dashboard__invoice-amount"><?php echo esc_html( number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency ); ?></span>
 							<span class="tr-dashboard__invoice-meta">
 								<?php

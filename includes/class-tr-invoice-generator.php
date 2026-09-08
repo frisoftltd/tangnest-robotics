@@ -27,6 +27,18 @@ class TR_Invoice_Generator {
 				continue;
 			}
 
+			if ( ! empty( $family->program_start_date ) && $family->program_start_date > $today_str ) {
+				continue;
+			}
+
+			if ( ! empty( $family->program_end_date ) && $family->program_end_date < $today_str ) {
+				TR_Logger::info( 'Invoice generation skipped: family programme has ended', [
+					'family_id'        => $family_id,
+					'program_end_date' => $family->program_end_date,
+				] );
+				continue;
+			}
+
 			$active_students = TR_Students::get_list( [ 'family_id' => $family_id, 'status' => 'active', 'per_page' => 200 ] );
 			if ( empty( $active_students ) ) {
 				continue;
@@ -46,9 +58,17 @@ class TR_Invoice_Generator {
 				continue;
 			}
 
+			// $today's day-of-month IS the billing day (is_billing_day() just
+			// confirmed it), so it doubles as period_start; the day before
+			// next month's billing day is period_end — the two combine to
+			// tile every consecutive invoice with no gap and no overlap.
+			$period_end = $today->modify( '+1 month' )->modify( '-1 day' )->format( 'Y-m-d' );
+
 			$invoice_id = TR_Invoices::insert( [
 				'family_id'        => $family_id,
 				'period'           => $period,
+				'period_start'     => $today_str,
+				'period_end'       => $period_end,
 				'amount'           => $amount,
 				'currency'         => $family->currency ?: 'RWF',
 				'status'           => 'pending',

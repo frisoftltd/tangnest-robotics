@@ -212,10 +212,20 @@
 	flex-wrap: wrap;
 }
 
+.tr-dashboard__invoice-period-group {
+	display: flex;
+	flex-direction: column;
+	min-width: 64px;
+}
+
 .tr-dashboard__invoice-period {
 	font-weight: 600;
 	color: #1a2535;
-	min-width: 64px;
+}
+
+.tr-dashboard__invoice-range {
+	font-size: 0.75rem;
+	color: #8a8f98;
 }
 
 .tr-dashboard__invoice-amount {

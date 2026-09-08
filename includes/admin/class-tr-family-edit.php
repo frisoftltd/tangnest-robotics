@@ -49,6 +49,33 @@ class TR_Family_Edit {
 		}
 		$override_anchor = ! empty( $_POST['override_anchor'] );
 
+		$program_start_input = isset( $_POST['program_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['program_start_date'] ) ) : '';
+		$program_end_input   = isset( $_POST['program_end_date'] ) ? sanitize_text_field( wp_unslash( $_POST['program_end_date'] ) ) : '';
+
+		$program_start_date = '';
+		if ( '' !== $program_start_input ) {
+			$dt = DateTime::createFromFormat( 'Y-m-d', $program_start_input );
+			if ( ! $dt || $dt->format( 'Y-m-d' ) !== $program_start_input ) {
+				$errors[] = __( 'Programme start date is not a valid date.', 'tangnest-robotics' );
+			} else {
+				$program_start_date = $program_start_input;
+			}
+		}
+
+		$program_end_date = '';
+		if ( '' !== $program_end_input ) {
+			$dt = DateTime::createFromFormat( 'Y-m-d', $program_end_input );
+			if ( ! $dt || $dt->format( 'Y-m-d' ) !== $program_end_input ) {
+				$errors[] = __( 'Programme end date is not a valid date.', 'tangnest-robotics' );
+			} else {
+				$program_end_date = $program_end_input;
+			}
+		}
+
+		if ( '' !== $program_start_date && '' !== $program_end_date && $program_start_date > $program_end_date ) {
+			$errors[] = __( 'Programme start date must be on or before the programme end date.', 'tangnest-robotics' );
+		}
+
 		$status = isset( $_POST['status'] ) && in_array( $_POST['status'], TR_Families::STATUSES, true ) ? $_POST['status'] : 'active';
 		$notes  = isset( $_POST['notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['notes'] ) ) : '';
 
@@ -157,13 +184,15 @@ class TR_Family_Edit {
 			// family's billing. Re-saving the family (e.g. to switch
 			// package) always refreshes the snapshot to the new package's
 			// current price.
-			'monthly_amount' => $package->default_monthly_fee,
-			'package_id'     => $package_id,
-			'months_paid'    => $existing_family ? (int) $existing_family->months_paid : 0,
-			'parent_user_id' => $user_id,
-			'currency'       => 'RWF',
-			'status'         => $status,
-			'notes'          => $notes,
+			'monthly_amount'     => $package->default_monthly_fee,
+			'package_id'         => $package_id,
+			'months_paid'        => $existing_family ? (int) $existing_family->months_paid : 0,
+			'parent_user_id'     => $user_id,
+			'currency'           => 'RWF',
+			'program_start_date' => $program_start_date,
+			'program_end_date'   => $program_end_date,
+			'status'             => $status,
+			'notes'              => $notes,
 		];
 
 		if ( $family_id > 0 ) {
@@ -189,19 +218,23 @@ class TR_Family_Edit {
 			] );
 		}
 
+		// v0.8.1: the add-child row no longer asks for an enrollment date —
+		// the current date stands in for it wherever the anchor logic needs
+		// one, so a family's billing day still gets set from the day the
+		// first child is actually added.
+		$today_for_anchor = current_time( 'Y-m-d' );
+
 		foreach ( $valid_children as $child ) {
 			TR_Students::insert( [
-				'family_id'     => $family_id,
-				'first_name'    => $child['first_name'],
-				'last_name'     => $child['last_name'],
-				'date_of_birth' => $child['date_of_birth'],
-				'school'        => $child['school'],
-				'status'        => 'active',
+				'family_id'  => $family_id,
+				'first_name' => $child['first_name'],
+				'last_name'  => $child['last_name'],
+				'status'     => 'active',
 			] );
 
 			// Idempotent — only the first child ever actually moves this
 			// from 0, regardless of how many rows are processed here.
-			TR_Families::set_billing_anchor( $family_id, $child['enrolled_on'] );
+			TR_Families::set_billing_anchor( $family_id, $today_for_anchor );
 		}
 
 		TR_Families::clear_composition_flag( $family_id );
@@ -222,10 +255,11 @@ class TR_Family_Edit {
 	/**
 	 * A fully blank row is just an unused template row appended by the "Add
 	 * child" button and never filled in — silently skipped, not an error.
-	 * Any row with at least a name in it is validated fully. No program
-	 * field here (v0.8.0) — the family's package covers every child on it;
-	 * "enrolled_on" stays because it's still what sets the billing anchor
-	 * for a family that doesn't have one yet.
+	 * Any row with at least a name in it is validated fully. v0.8.1: a
+	 * child is a name attached to the family — no date of birth, school or
+	 * enrollment date collected here any more (the billing anchor, which
+	 * used to read the row's own enrollment date, now just uses today —
+	 * see the caller in maybe_handle_submit()).
 	 */
 	private static function parse_children_rows( $raw_rows ): array {
 		$valid_children = [];
@@ -258,40 +292,9 @@ class TR_Family_Edit {
 				continue;
 			}
 
-			$dob = '';
-			if ( ! empty( $row['date_of_birth'] ) ) {
-				$raw_dob = sanitize_text_field( $row['date_of_birth'] );
-				$dt      = DateTime::createFromFormat( 'Y-m-d', $raw_dob );
-				if ( ! $dt || $dt->format( 'Y-m-d' ) !== $raw_dob ) {
-					$errors[] = sprintf(
-						/* translators: %s: child's name */
-						__( '%s: date of birth is not a valid date.', 'tangnest-robotics' ),
-						$who
-					);
-					continue;
-				}
-				$dob = $raw_dob;
-			}
-
-			$school = isset( $row['school'] ) ? sanitize_text_field( $row['school'] ) : '';
-
-			$enrolled_on = isset( $row['enrolled_on'] ) ? sanitize_text_field( $row['enrolled_on'] ) : '';
-			$dt          = DateTime::createFromFormat( 'Y-m-d', $enrolled_on );
-			if ( ! $dt || $dt->format( 'Y-m-d' ) !== $enrolled_on ) {
-				$errors[] = sprintf(
-					/* translators: %s: child's name */
-					__( '%s: enrollment date is not a valid date.', 'tangnest-robotics' ),
-					$who
-				);
-				continue;
-			}
-
 			$valid_children[] = [
-				'first_name'    => $first,
-				'last_name'     => $last,
-				'date_of_birth' => $dob,
-				'school'        => $school,
-				'enrolled_on'   => $enrolled_on,
+				'first_name' => $first,
+				'last_name'  => $last,
 			];
 		}
 
@@ -500,10 +503,21 @@ class TR_Family_Edit {
 							<input type="number" id="tr-billing-day" name="billing_day" min="1" max="28" value="<?php echo esc_attr( (int) $billing_day_value > 0 ? (int) $billing_day_value : '' ); ?>" <?php echo ( $family && (int) $family->billing_day > 0 ) ? 'readonly' : ''; ?>>
 							<?php if ( $family && (int) $family->billing_day > 0 ) : ?>
 								<label><input type="checkbox" name="override_anchor" value="1" id="tr-override-anchor"> <?php esc_html_e( 'Override anchor', 'tangnest-robotics' ); ?></label>
-								<p class="description"><?php esc_html_e( 'Set automatically from the first child\'s enrollment date. Check the box to change it by hand.', 'tangnest-robotics' ); ?></p>
+								<p class="description"><?php esc_html_e( 'Set automatically from the date the first child was added. Check the box to change it by hand.', 'tangnest-robotics' ); ?></p>
 							<?php else : ?>
-								<p class="description"><?php esc_html_e( 'Left blank, this is set automatically when the first child is enrolled.', 'tangnest-robotics' ); ?></p>
+								<p class="description"><?php esc_html_e( 'Left blank, this is set automatically from the date the first child is added.', 'tangnest-robotics' ); ?></p>
 							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="tr-program-start"><?php esc_html_e( 'Programme start date', 'tangnest-robotics' ); ?></label></th>
+						<td><input type="date" id="tr-program-start" name="program_start_date" value="<?php echo esc_attr( $posted['program_start_date'] ?? ( $family->program_start_date ?? '' ) ); ?>"></td>
+					</tr>
+					<tr>
+						<th><label for="tr-program-end"><?php esc_html_e( 'Programme end date', 'tangnest-robotics' ); ?></label></th>
+						<td>
+							<input type="date" id="tr-program-end" name="program_end_date" value="<?php echo esc_attr( $posted['program_end_date'] ?? ( $family->program_end_date ?? '' ) ); ?>">
+							<p class="description"><?php esc_html_e( 'Defaults to the start date plus the package\'s duration once you enter a start date — change it if this family needs a longer or shorter span.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -534,9 +548,6 @@ class TR_Family_Edit {
 						<tr>
 							<th><?php esc_html_e( 'First name', 'tangnest-robotics' ); ?></th>
 							<th><?php esc_html_e( 'Last name', 'tangnest-robotics' ); ?></th>
-							<th><?php esc_html_e( 'Date of birth', 'tangnest-robotics' ); ?></th>
-							<th><?php esc_html_e( 'School', 'tangnest-robotics' ); ?></th>
-							<th><?php esc_html_e( 'Enrolled on', 'tangnest-robotics' ); ?></th>
 							<th></th>
 						</tr>
 					</thead>
@@ -572,6 +583,32 @@ class TR_Family_Edit {
 			}
 			packageSelect.addEventListener( 'change', updatePackageDetails );
 
+			var programStartInput = document.getElementById( 'tr-program-start' );
+			var programEndInput   = document.getElementById( 'tr-program-end' );
+
+			function pad2( n ) { return n < 10 ? '0' + n : '' + n; }
+
+			function addMonthsToDateString( dateStr, months ) {
+				var parts = dateStr.split( '-' );
+				var year  = parseInt( parts[0], 10 );
+				var month = parseInt( parts[1], 10 );
+				var day   = parseInt( parts[2], 10 );
+				if ( ! year || ! month || ! day ) { return ''; }
+				var d = new Date( year, month - 1 + months, day );
+				return d.getFullYear() + '-' + pad2( d.getMonth() + 1 ) + '-' + pad2( d.getDate() );
+			}
+
+			function updateProgramEndDefault() {
+				if ( ! programStartInput.value ) { return; }
+				var detail = packageDetails[ packageSelect.value ];
+				if ( ! detail ) { return; }
+				var next = addMonthsToDateString( programStartInput.value, detail.duration );
+				if ( next ) { programEndInput.value = next; }
+			}
+
+			programStartInput.addEventListener( 'change', updateProgramEndDefault );
+			packageSelect.addEventListener( 'change', updateProgramEndDefault );
+
 			var body     = document.getElementById( 'tr-new-children-body' );
 			var addBtn   = document.getElementById( 'tr-add-child' );
 			var rowIndex = 0;
@@ -596,9 +633,6 @@ class TR_Family_Edit {
 				tr.innerHTML =
 					'<td>' + field( 'text', 'first_name', data.first_name ) + '</td>' +
 					'<td>' + field( 'text', 'last_name', data.last_name ) + '</td>' +
-					'<td>' + field( 'date', 'date_of_birth', data.date_of_birth ) + '</td>' +
-					'<td>' + field( 'text', 'school', data.school ) + '</td>' +
-					'<td>' + field( 'date', 'enrolled_on', data.enrolled_on || <?php echo wp_json_encode( gmdate( 'Y-m-d' ) ); ?> ) + '</td>' +
 					'<td><button type="button" class="button-link tr-remove-child"><?php echo esc_js( __( 'Remove', 'tangnest-robotics' ) ); ?></button></td>';
 
 				body.appendChild( tr );
@@ -645,20 +679,16 @@ class TR_Family_Edit {
 			<thead>
 				<tr>
 					<th><?php esc_html_e( 'Name', 'tangnest-robotics' ); ?></th>
-					<th><?php esc_html_e( 'Date of birth', 'tangnest-robotics' ); ?></th>
-					<th><?php esc_html_e( 'School', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Status', 'tangnest-robotics' ); ?></th>
 				</tr>
 			</thead>
 			<tbody>
 				<?php if ( empty( $students ) ) : ?>
-					<tr><td colspan="4"><?php esc_html_e( 'No students yet.', 'tangnest-robotics' ); ?></td></tr>
+					<tr><td colspan="2"><?php esc_html_e( 'No students yet.', 'tangnest-robotics' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $students as $student ) : ?>
 						<tr>
 							<td><?php echo esc_html( trim( $student->first_name . ' ' . $student->last_name ) ); ?></td>
-							<td><?php echo esc_html( $student->date_of_birth ?? '—' ); ?></td>
-							<td><?php echo esc_html( $student->school ?? '—' ); ?></td>
 							<td><?php echo esc_html( ucfirst( $student->status ) ); ?></td>
 						</tr>
 					<?php endforeach; ?>

@@ -459,6 +459,7 @@ class TR_Admin_Menu {
 			'marked_overdue'          => [ 'success', __( 'Selected invoices marked overdue.', 'tangnest-robotics' ) ],
 			'no_invoices_selected'    => [ 'error', __( 'No invoices were selected.', 'tangnest-robotics' ) ],
 			'invoice_created'         => [ 'success', __( 'Invoice created.', 'tangnest-robotics' ) ],
+			'invoice_created_date_warning' => [ 'warning', __( 'Invoice created — note the period dates fall outside the selected period month.', 'tangnest-robotics' ) ],
 			'invoice_create_failed'   => [ 'error', __( 'Could not create invoice — an invoice for that period may already exist.', 'tangnest-robotics' ) ],
 			'invoice_deleted'         => [ 'success', __( 'Invoice permanently deleted.', 'tangnest-robotics' ) ],
 			'invoice_delete_failed'   => [ 'error', __( 'That invoice could not be deleted — only cancelled invoices can be deleted.', 'tangnest-robotics' ) ],

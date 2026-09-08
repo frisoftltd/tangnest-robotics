@@ -58,19 +58,20 @@ $is_overdue = $days_overdue > 0;
 									</p>
 									<p style="margin:0;font-size:13px;color:#555555;">
 										<?php
+										$period_label = TR_Invoices::period_label_with_range( $invoice );
 										if ( $is_overdue ) {
 											printf(
-												/* translators: 1: billing period, 2: due date, 3: days overdue */
+												/* translators: 1: billing period (with date range when known), 2: due date, 3: days overdue */
 												esc_html__( 'Period %1$s — was due %2$s (%3$d days overdue)', 'tangnest-robotics' ),
-												esc_html( $invoice->period ),
+												esc_html( $period_label ),
 												esc_html( $due_date ),
 												(int) $days_overdue
 											);
 										} else {
 											printf(
-												/* translators: 1: billing period, 2: due date */
+												/* translators: 1: billing period (with date range when known), 2: due date */
 												esc_html__( 'Period %1$s — due %2$s', 'tangnest-robotics' ),
-												esc_html( $invoice->period ),
+												esc_html( $period_label ),
 												esc_html( $due_date )
 											);
 										}

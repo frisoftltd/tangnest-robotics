@@ -17,6 +17,12 @@ See the project spec for the full data model, feature set, and build order.
 
 ## Changelog
 
+### v0.8.1
+- New: Admin can set the start and end dates each invoice covers, and the due date
+- New: Programme start and end dates on the family, respected by automatic billing
+- Changed: Welcome email now describes managing and paying INTYOZA LAB access fees
+- Changed: Student records are now name-only — date of birth, school and enrolment date removed from the forms
+
 ### v0.8.0
 - Changed: Families now select a single package that sets their price, product code and duration
 - Changed: Programs renamed to Packages, with a notes field for distinguishing price tiers

@@ -53,9 +53,9 @@ $due_date   = date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_d
 									<p style="margin:0;font-size:13px;color:#555555;">
 										<?php
 										printf(
-											/* translators: 1: billing period, 2: due date */
+											/* translators: 1: billing period (with date range when known), 2: due date */
 											esc_html__( 'Period %1$s — due %2$s', 'tangnest-robotics' ),
-											esc_html( $invoice->period ),
+											esc_html( TR_Invoices::period_label_with_range( $invoice ) ),
 											esc_html( $due_date )
 										);
 										?>

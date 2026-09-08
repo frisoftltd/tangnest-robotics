@@ -51,6 +51,13 @@ class TR_DB {
 			self::migrate_families_to_packages();
 		}
 
+		// A brand new install has no invoices to backfill — period_start/
+		// period_end are only ever left NULL by a row that predates this
+		// column existing at all.
+		if ( $previous_version && version_compare( $previous_version, '0.8.1', '<' ) ) {
+			self::migrate_backfill_invoice_period_dates();
+		}
+
 		update_option( self::DB_VERSION_OPTION, TANGNEST_ROBOTICS_DB_VERSION );
 	}
 
@@ -108,6 +115,44 @@ class TR_DB {
 		TR_Logger::info( 'v0.8.0 migration: families matched to packages', [
 			'migrated'  => $migrated,
 			'to_review' => $to_review,
+		] );
+	}
+
+	/**
+	 * v0.8.1 gives an admin control over the dates each invoice covers.
+	 * Every invoice created before this ran was implicitly "the whole
+	 * period month" — this backfills that assumption into real dates so
+	 * existing invoices display a sensible range instead of none at all.
+	 * Runs once, as part of the version-gated upgrade above.
+	 */
+	private static function migrate_backfill_invoice_period_dates(): void {
+		global $wpdb;
+		$invoices_table = self::table_invoices();
+
+		$rows = $wpdb->get_results( "SELECT id, period FROM {$invoices_table} WHERE period_start IS NULL OR period_end IS NULL" );
+
+		$updated = 0;
+		foreach ( $rows as $row ) {
+			$timestamp = strtotime( $row->period . '-01' );
+			if ( false === $timestamp ) {
+				continue;
+			}
+
+			$wpdb->update(
+				$invoices_table,
+				[
+					'period_start' => gmdate( 'Y-m-01', $timestamp ),
+					'period_end'   => gmdate( 'Y-m-t', $timestamp ),
+				],
+				[ 'id' => $row->id ],
+				[ '%s', '%s' ],
+				[ '%d' ]
+			);
+			$updated++;
+		}
+
+		TR_Logger::info( 'v0.8.1 migration: invoice period dates backfilled', [
+			'rows_updated' => $updated,
 		] );
 	}
 
@@ -171,6 +216,8 @@ class TR_DB {
 			months_paid              TINYINT(3)   UNSIGNED NOT NULL DEFAULT 0,
 			currency                 VARCHAR(10)  NOT NULL DEFAULT 'RWF',
 			billing_day              TINYINT(3)   UNSIGNED NOT NULL DEFAULT 1,
+			program_start_date       DATE         DEFAULT NULL,
+			program_end_date         DATE         DEFAULT NULL,
 			status                   VARCHAR(20)  NOT NULL DEFAULT 'active',
 			notes                    TEXT         DEFAULT NULL,
 			access_token_hash        CHAR(64)     DEFAULT NULL,
@@ -249,6 +296,8 @@ class TR_DB {
 			id                        BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
 			family_id                 BIGINT(20) UNSIGNED NOT NULL,
 			period                    VARCHAR(7)   NOT NULL,
+			period_start              DATE         DEFAULT NULL,
+			period_end                DATE         DEFAULT NULL,
 			amount                    DECIMAL(12,2) NOT NULL,
 			currency                  VARCHAR(10)  NOT NULL DEFAULT 'RWF',
 			status                    VARCHAR(20)  NOT NULL DEFAULT 'pending',

@@ -51,6 +51,38 @@ class TR_Invoice_Actions {
 			$errors[] = __( 'Period must be in YYYY-MM format.', 'tangnest-robotics' );
 		}
 
+		// Mirrors the form's own JS default (first/last day of the chosen
+		// period month) in case the field arrived blank — JS disabled, or a
+		// tampered submission.
+		$period_start = isset( $_POST['period_start'] ) ? sanitize_text_field( wp_unslash( $_POST['period_start'] ) ) : '';
+		$period_end   = isset( $_POST['period_end'] ) ? sanitize_text_field( wp_unslash( $_POST['period_end'] ) ) : '';
+
+		if ( preg_match( '/^\d{4}-\d{2}$/', $period ) ) {
+			$period_month_timestamp = strtotime( $period . '-01' );
+			if ( '' === $period_start && false !== $period_month_timestamp ) {
+				$period_start = gmdate( 'Y-m-01', $period_month_timestamp );
+			}
+			if ( '' === $period_end && false !== $period_month_timestamp ) {
+				$period_end = gmdate( 'Y-m-t', $period_month_timestamp );
+			}
+		}
+
+		$period_start_dt = DateTime::createFromFormat( 'Y-m-d', $period_start );
+		if ( ! $period_start_dt || $period_start_dt->format( 'Y-m-d' ) !== $period_start ) {
+			$errors[] = __( 'Period start is not a valid date.', 'tangnest-robotics' );
+			$period_start_dt = null;
+		}
+
+		$period_end_dt = DateTime::createFromFormat( 'Y-m-d', $period_end );
+		if ( ! $period_end_dt || $period_end_dt->format( 'Y-m-d' ) !== $period_end ) {
+			$errors[] = __( 'Period end is not a valid date.', 'tangnest-robotics' );
+			$period_end_dt = null;
+		}
+
+		if ( $period_start_dt && $period_end_dt && $period_start_dt > $period_end_dt ) {
+			$errors[] = __( 'Period start must be on or before period end.', 'tangnest-robotics' );
+		}
+
 		$amount = isset( $_POST['amount'] ) ? (float) wp_unslash( $_POST['amount'] ) : -1;
 		if ( $amount <= 0 ) {
 			$errors[] = __( 'Amount must be greater than zero.', 'tangnest-robotics' );
@@ -68,9 +100,16 @@ class TR_Invoice_Actions {
 			exit;
 		}
 
+		// An admin may deliberately bill a span that crosses a month
+		// boundary — this never blocks the save, it only changes which
+		// success notice is shown afterward.
+		$dates_outside_period_month = 0 !== strpos( $period_start, $period ) || 0 !== strpos( $period_end, $period );
+
 		$invoice_id = TR_Invoices::insert( [
 			'family_id'        => $family_id,
 			'period'           => $period,
+			'period_start'     => $period_start,
+			'period_end'       => $period_end,
 			'amount'           => $amount,
 			'currency'         => $family->currency ?: 'RWF',
 			'status'           => 'pending',
@@ -84,7 +123,13 @@ class TR_Invoice_Actions {
 			exit;
 		}
 
-		TR_Logger::info( 'Invoice created manually', [ 'family_id' => $family_id, 'invoice_id' => $invoice_id, 'period' => $period ] );
+		TR_Logger::info( 'Invoice created manually', [
+			'family_id'    => $family_id,
+			'invoice_id'   => $invoice_id,
+			'period'       => $period,
+			'period_start' => $period_start,
+			'period_end'   => $period_end,
+		] );
 
 		// Every invoice-creation path emails the parent — no opt-in, no
 		// toggle. The other two paths (cron, Generate Invoices Now) both
@@ -92,7 +137,8 @@ class TR_Invoice_Actions {
 		// this; this row action is the one path that inserts directly.
 		TR_Notifications::send_invoice_issued_email( $family_id, $invoice_id );
 
-		wp_safe_redirect( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'tr_notice' => 'invoice_created' ], admin_url( 'admin.php' ) ) );
+		$notice = $dates_outside_period_month ? 'invoice_created_date_warning' : 'invoice_created';
+		wp_safe_redirect( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'tr_notice' => $notice ], admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -139,6 +185,17 @@ class TR_Invoice_Actions {
 						<td><input type="month" id="tr-period" name="period" required value="<?php echo esc_attr( current_time( 'Y-m' ) ); ?>"></td>
 					</tr>
 					<tr>
+						<th><label for="tr-period-start"><?php esc_html_e( 'Period start', 'tangnest-robotics' ); ?></label></th>
+						<td><input type="date" id="tr-period-start" name="period_start" required value="<?php echo esc_attr( current_time( 'Y-m-01' ) ); ?>"></td>
+					</tr>
+					<tr>
+						<th><label for="tr-period-end"><?php esc_html_e( 'Period end', 'tangnest-robotics' ); ?></label></th>
+						<td>
+							<input type="date" id="tr-period-end" name="period_end" required value="<?php echo esc_attr( current_time( 'Y-m-t' ) ); ?>">
+							<p class="description"><?php esc_html_e( 'Both normally fall inside the period month above, but you can cross a month boundary if you need to.', 'tangnest-robotics' ); ?></p>
+						</td>
+					</tr>
+					<tr>
 						<th><label for="tr-amount"><?php esc_html_e( 'Amount (RWF)', 'tangnest-robotics' ); ?></label></th>
 						<td><input type="number" id="tr-amount" name="amount" step="0.01" min="0.01" required value="<?php echo esc_attr( $family->monthly_amount ); ?>"></td>
 					</tr>
@@ -150,6 +207,38 @@ class TR_Invoice_Actions {
 				<?php submit_button( __( 'Create Invoice', 'tangnest-robotics' ) ); ?>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_FAMILIES ) ); ?>"><?php esc_html_e( 'Cancel', 'tangnest-robotics' ); ?></a>
 			</form>
+			<script>
+			(function() {
+				var periodInput = document.getElementById( 'tr-period' );
+				var startInput  = document.getElementById( 'tr-period-start' );
+				var endInput    = document.getElementById( 'tr-period-end' );
+
+				function pad( n ) { return n < 10 ? '0' + n : '' + n; }
+
+				function defaultsFor( period ) {
+					var parts = period.split( '-' );
+					var year  = parseInt( parts[0], 10 );
+					var month = parseInt( parts[1], 10 );
+					if ( ! year || ! month ) { return null; }
+					var lastDay = new Date( year, month, 0 ).getDate();
+					return { start: period + '-01', end: period + '-' + pad( lastDay ) };
+				}
+
+				var lastDefaults = defaultsFor( periodInput.value ) || { start: '', end: '' };
+
+				periodInput.addEventListener( 'change', function() {
+					var next = defaultsFor( periodInput.value );
+					if ( ! next ) { return; }
+					if ( '' === startInput.value || startInput.value === lastDefaults.start ) {
+						startInput.value = next.start;
+					}
+					if ( '' === endInput.value || endInput.value === lastDefaults.end ) {
+						endInput.value = next.end;
+					}
+					lastDefaults = next;
+				} );
+			})();
+			</script>
 		</div>
 		<?php
 	}

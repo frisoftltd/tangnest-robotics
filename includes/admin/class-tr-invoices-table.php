@@ -283,7 +283,8 @@ class TR_Invoices_Table extends WP_List_Table {
 			case 'id':
 				return '#' . esc_html( $item->id );
 			case 'period':
-				return esc_html( $item->period );
+				$range = TR_Invoices::period_range_short( $item );
+				return esc_html( $item->period ) . ( '' !== $range ? '<br><span class="tr-invoice-meta">' . esc_html( $range ) . '</span>' : '' );
 			case 'amount':
 				return esc_html( number_format( (float) $item->amount, 2 ) . ' ' . $item->currency );
 			case 'due_date':
