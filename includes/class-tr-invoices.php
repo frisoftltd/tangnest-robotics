@@ -281,6 +281,42 @@ class TR_Invoices {
 		return (int) $wpdb->rows_affected;
 	}
 
+	/**
+	 * Sum of amount grouped by status, across every family — no per-filter
+	 * WHERE clause, unlike TR_Invoices_Table::compute_summary() which
+	 * aggregates whatever the admin's current list-table filters are. Used
+	 * by `wp tangnest status` for the outstanding/collected figures.
+	 */
+	public static function totals_by_status(): array {
+		global $wpdb;
+
+		$rows = $wpdb->get_results( "SELECT status, COALESCE(SUM(amount), 0) AS total FROM " . self::table() . " GROUP BY status" );
+
+		$totals = [];
+		foreach ( $rows as $row ) {
+			$totals[ $row->status ] = (float) $row->total;
+		}
+
+		return $totals;
+	}
+
+	/**
+	 * Sum of amount for invoices actually paid within [$start_date,
+	 * $end_date] (inclusive, by paid_at's date) — "collected this month" on
+	 * `wp tangnest status`, as opposed to totals_by_status()'s all-time
+	 * "collected" figure.
+	 */
+	public static function collected_in_period( string $start_date, string $end_date ): float {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"SELECT COALESCE(SUM(amount), 0) FROM " . self::table() . " WHERE status = %s AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN %s AND %s",
+			[ 'paid', $start_date, $end_date ]
+		);
+
+		return (float) $wpdb->get_var( $sql );
+	}
+
 	public static function family_balance( int $family_id ): float {
 		global $wpdb;
 

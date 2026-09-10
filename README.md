@@ -15,7 +15,140 @@ See the project spec for the full data model, feature set, and build order.
 - WordPress 5.8+
 - PHP 7.4+
 
+## CLI
+
+`wp tangnest ...` — read-only inspection, plus a genuine dry run for
+invoice generation. Registered only when running under WP-CLI; none of
+it runs on, or affects, a normal web request. Every command supports
+`--format=json` for scripting; `status`, `family`, `invoices` and
+`remind` also support `--format=table|csv|yaml`.
+
+No command prints a secret key, a raw token, or a full access/pay URL —
+token and link state are always shown as a status, never as the link
+itself.
+
+### `wp tangnest status`
+
+A one-screen overview: families, children, packages, invoices, money,
+the next billing date, cron, online payments and the debug-log toggle —
+plus anything worth flagging (a family with no package, an active
+package with no product code and no site-wide default, a missing cron
+event, online payments enabled with no secret key).
+
+```
+$ wp tangnest status
+Tangnest Robotics 0.9.0  (DB 0.8.6)
+
+Families      9 active, 0 inactive
+Children      14
+Packages      18 active
+Invoices      9 pending, 2 paid, 0 overdue
+Outstanding   755,000 RWF
+Collected     240,000 RWF this month
+
+Next billing  26 Sep 2026 — 9 families due
+Cron          tangnest_robotics_daily, next run 11 Sep 10:03
+Online pay    enabled, product code set
+Debug log     off
+
+No issues found.
+```
+
+### `wp tangnest generate --dry-run`
+
+Runs the exact same eligibility logic as the daily cron job and shows
+what it would do — creates nothing, sends nothing, calls no external
+API. Add `--family=<id>` to check a single family. Drop `--dry-run` to
+actually run it (same behavior as the daily cron, or the "Generate
+invoices now" button in Settings), printing the same table of what it
+actually did.
+
+```
+$ wp tangnest generate --dry-run
+Would create 9 invoices for 2026-09 (26 Sep – 25 Oct), total 795,000 RWF
+
+[table] family  parent            package                       amount    due
+        5       Andre KAZEYEZU    Intro Robotics                120,000   26 Sep
+        ...
+
+Skipped 1 family
+[table] family  reason
+        2       already invoiced for 2026-09
+
+No changes made. Run without --dry-run to create these.
+```
+
+### `wp tangnest family <id>`
+
+Everything about one family — parent, package, billing day, programme
+dates, progress, children, access/message token status, and every
+invoice on file. Replaces reaching for a hand-written SQL query.
+
+```
+$ wp tangnest family 5
+Family #5 (active)
+
+Parent        Andre KAZEYEZU <andre@example.com>
+Package       Intro Robotics
+Amount        120,000 RWF / month
+Billing day   26
+...
+```
+
+### `wp tangnest invoices`
+
+Lists invoices with `--status=`, `--family=` and `--period=` filters.
+Defaults to the current billing period; pass `--period=all` to list
+every period.
+
+```
+$ wp tangnest invoices --status=overdue
+```
+
+### `wp tangnest remind <invoice_id> --dry-run`
+
+Previews the reminder that would be sent for one invoice — including
+the resolved day-count line ("due in 3 days", "due today", "2 days
+overdue") — without sending it, minting a token, or writing to the log.
+Drop `--dry-run` to actually send it (equivalent to the "Send reminder"
+row action on the Invoices screen).
+
+```
+$ wp tangnest remind 9 --dry-run
+Invoice #9 — 2026-09 — pending
+To            Andre KAZEYEZU <andre@example.com>
+Amount        120,000 RWF, due 26 Sep 2026
+Message       We kindly remind you that your payment is due today.
+Pay link      would be included
+Message token Valid until 10 Oct 2026
+
+DRY RUN — no email was sent.
+```
+
 ## Changelog
+
+### v0.9.0
+- New: `wp tangnest` WP-CLI command set — `status` (system overview with
+  flagged issues), `generate --dry-run` (preview invoice generation
+  without writing or sending anything), `family <id>`, `invoices`, and
+  `remind <invoice_id> --dry-run`
+- Changed: `TR_Invoice_Generator` now splits its decision logic
+  (`build_plan()`) from execution (`execute_plan()`) — the dry run and
+  the real run share the exact same eligibility rules, not two copies
+  of them
+
+### v0.8.6
+- Fix: families with a `0000-00-00` programme date were permanently
+  skipped by invoice generation — a `NULL` date routed through a `%s`
+  placeholder was silently written as `0000-00-00` instead of `NULL`,
+  and the generator then read that as a real, long-past end date
+- Migration converts existing `0000-00-00` programme dates to `NULL`
+
+### v0.8.5
+- Changed: the reminder email and reminder WhatsApp message are now a
+  single line ("due in 3 days" / "due tomorrow" / "due today" / "1 day
+  overdue" / "N days overdue") instead of repeating the welcome email's
+  intro, children list and apology paragraph
 
 ### v0.8.4
 - Fix: automatic emails and the reminder WhatsApp message now reuse the family's current message token while it's still valid instead of minting a new one on every send — every message sent within the 14-day window keeps working, not just the most recent one
