@@ -127,6 +127,21 @@ DRY RUN — no email was sent.
 
 ## Changelog
 
+### v0.9.1
+- Fix: `wp tangnest status`'s "Next billing" figure could report a date
+  and count that didn't correspond to any family that would actually
+  bill — it counted every active family with a billing day set, even
+  one with no package (or no active children, or a zero amount, or an
+  already-ended programme) that could never generate an invoice. Now
+  shares `TR_Invoice_Generator::is_billable()`, the same has-package/
+  has-children/positive-amount/programme-not-ended gate generation
+  itself uses, so a stranded family's stale billing anchor can't surface
+  as a phantom "next billing" date
+- Confirmed (with new regression tests): a programme starting exactly
+  today is treated as started, and a programme ending exactly today
+  still bills — both boundaries were already correct, now locked in by
+  an explicit equality test for each
+
 ### v0.9.0
 - New: `wp tangnest` WP-CLI command set — `status` (system overview with
   flagged issues), `generate --dry-run` (preview invoice generation

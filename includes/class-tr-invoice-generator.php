@@ -122,6 +122,50 @@ class TR_Invoice_Generator {
 	}
 
 	/**
+	 * Whether $family could produce an invoice at all right now, ignoring
+	 * anything specific to "today" or to a particular period — has a
+	 * package, has at least one active child, has a positive monthly
+	 * amount, and its programme hasn't already ended. Deliberately does
+	 * NOT check program_start_date: a programme that hasn't started yet
+	 * will still bill once it does, on its already-anchored billing day,
+	 * so it isn't "permanently unbillable" the way the other four are.
+	 *
+	 * Shared by evaluate_family() (which adds the today/period-specific
+	 * checks on top) and `wp tangnest status`'s "next billing" figure —
+	 * before this was extracted, that figure counted every active family
+	 * with a billing day set, including ones with no package or no
+	 * active children that could never actually generate an invoice, so
+	 * a stranded family's stale billing anchor could surface as a
+	 * phantom "next billing" date no admin could account for.
+	 */
+	public static function is_billable( object $family, string $today_str ): array {
+		if ( empty( $family->package_id ) ) {
+			return [ 'billable' => false, 'code' => 'no_package', 'message' => 'family has no package', 'context' => [] ];
+		}
+
+		if ( TR_Families::is_date_set( $family->program_end_date ) && $family->program_end_date < $today_str ) {
+			return [
+				'billable' => false,
+				'code'     => 'ended',
+				'message'  => sprintf( 'programme has ended (ended %s)', $family->program_end_date ),
+				'context'  => [ 'program_end_date' => $family->program_end_date ],
+			];
+		}
+
+		$active_students = TR_Students::get_list( [ 'family_id' => (int) $family->id, 'status' => 'active', 'per_page' => 200 ] );
+		if ( empty( $active_students ) ) {
+			return [ 'billable' => false, 'code' => 'no_children', 'message' => 'no active children', 'context' => [] ];
+		}
+
+		$amount = (float) $family->monthly_amount;
+		if ( $amount <= 0 ) {
+			return [ 'billable' => false, 'code' => 'zero_amount', 'message' => 'monthly_amount is zero', 'context' => [] ];
+		}
+
+		return [ 'billable' => true, 'amount' => $amount, 'active_students' => $active_students ];
+	}
+
+	/**
 	 * One family's eligibility, in isolation — every rule real generation
 	 * applies, and nothing else. Returns ['skip' => null, 'amount' => ...,
 	 * 'active_students' => [...]] when the family would be billed, or
@@ -131,11 +175,12 @@ class TR_Invoice_Generator {
 	private static function evaluate_family( object $family, DateTimeInterface $today, string $today_str, string $period ): array {
 		$family_id = (int) $family->id;
 
-		if ( empty( $family->package_id ) ) {
+		$billable = self::is_billable( $family, $today_str );
+		if ( ! $billable['billable'] ) {
 			return [ 'skip' => [
-				'code'    => 'no_package',
-				'message' => 'family has no package',
-				'context' => [],
+				'code'    => $billable['code'],
+				'message' => $billable['message'],
+				'context' => $billable['context'],
 			] ];
 		}
 
@@ -144,23 +189,6 @@ class TR_Invoice_Generator {
 				'code'    => 'not_started',
 				'message' => sprintf( 'programme has not started yet (starts %s)', $family->program_start_date ),
 				'context' => [ 'program_start_date' => $family->program_start_date ],
-			] ];
-		}
-
-		if ( TR_Families::is_date_set( $family->program_end_date ) && $family->program_end_date < $today_str ) {
-			return [ 'skip' => [
-				'code'    => 'ended',
-				'message' => sprintf( 'programme has ended (ended %s)', $family->program_end_date ),
-				'context' => [ 'program_end_date' => $family->program_end_date ],
-			] ];
-		}
-
-		$active_students = TR_Students::get_list( [ 'family_id' => $family_id, 'status' => 'active', 'per_page' => 200 ] );
-		if ( empty( $active_students ) ) {
-			return [ 'skip' => [
-				'code'    => 'no_children',
-				'message' => 'no active children',
-				'context' => [],
 			] ];
 		}
 
@@ -180,16 +208,7 @@ class TR_Invoice_Generator {
 			] ];
 		}
 
-		$amount = (float) $family->monthly_amount;
-		if ( $amount <= 0 ) {
-			return [ 'skip' => [
-				'code'    => 'zero_amount',
-				'message' => 'monthly_amount is zero',
-				'context' => [],
-			] ];
-		}
-
-		return [ 'skip' => null, 'amount' => $amount, 'active_students' => $active_students ];
+		return [ 'skip' => null, 'amount' => $billable['amount'], 'active_students' => $billable['active_students'] ];
 	}
 
 	/**

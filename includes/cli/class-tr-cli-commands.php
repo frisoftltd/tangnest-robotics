@@ -623,16 +623,29 @@ class TR_CLI_Command {
 	}
 
 	/**
-	 * The nearest upcoming billing date among active families with a set
-	 * billing anchor, and how many share it — TR_Families::next_billing_date()
-	 * already knows how to project one family's anchor forward, this just
-	 * finds the earliest result and counts ties.
+	 * The nearest upcoming billing date among active, currently-billable
+	 * families with a set billing anchor, and how many share it —
+	 * TR_Families::next_billing_date() already knows how to project one
+	 * family's anchor forward, this just finds the earliest result and
+	 * counts ties.
+	 *
+	 * "Currently billable" is TR_Invoice_Generator::is_billable() — the
+	 * same has-package/has-children/positive-amount/programme-not-ended
+	 * gate generation itself uses, so a family stranded with a stale
+	 * billing anchor but no package (or no active children, or a zero
+	 * amount) doesn't surface here as a phantom "next billing" date it
+	 * will never actually reach.
 	 */
 	private static function next_billing_summary( array $active_families ): array {
-		$by_date = [];
+		$today_str = current_time( 'Y-m-d' );
+		$by_date   = [];
 
 		foreach ( $active_families as $family ) {
 			if ( (int) $family->billing_day < 1 ) {
+				continue;
+			}
+
+			if ( ! TR_Invoice_Generator::is_billable( $family, $today_str )['billable'] ) {
 				continue;
 			}
 

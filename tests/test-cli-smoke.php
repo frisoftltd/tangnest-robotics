@@ -97,6 +97,7 @@ function make_family( int $id, array $overrides = [] ): object {
 }
 
 $GLOBALS['TEST_FAMILIES'] = [
+	2 => make_family( 2, [ 'billing_day' => 24, 'package_id' => null, 'parent_user_id' => 206, 'monthly_amount' => 0 ] ),
 	5 => make_family( 5 ),
 	6 => make_family( 6, [ 'package_id' => null, 'parent_user_id' => 206, 'monthly_amount' => 0 ] ),
 ];
@@ -122,7 +123,36 @@ class TR_Families {
 
 	public static function progress_label( object $family ): string { return 'Month 1 of 8'; }
 
-	public static function next_billing_date( int $id ): ?string { return '2026-09-26'; }
+	/**
+	 * Faithful copy of the real algorithm (per-family billing_day
+	 * projected forward from "today"), not a canned value — a stub that
+	 * always returned the same date regardless of which family/billing_day
+	 * was passed in couldn't have caught the bug this fixture set exists
+	 * to reproduce. Uses its own fixed "today" (2026-09-20, deliberately
+	 * different from the rest of this file's fixed "today" of 2026-09-26)
+	 * because the real next_billing_date() reads the actual system clock
+	 * via `new DateTime('today')`, not current_time()/current_datetime() —
+	 * the same decoupling exists in production.
+	 */
+	public static function next_billing_date( int $id ): ?string {
+		$family = $GLOBALS['TEST_FAMILIES'][ $id ] ?? null;
+		if ( null === $family || (int) $family->billing_day < 1 ) {
+			return null;
+		}
+
+		$day       = (int) $family->billing_day;
+		$today     = new \DateTime( '2026-09-20' );
+		$month     = $today->format( 'Y-m' );
+		$candidate = \DateTime::createFromFormat( 'Y-m-d', $month . '-' . str_pad( (string) $day, 2, '0', STR_PAD_LEFT ) );
+		if ( false === $candidate ) {
+			return null;
+		}
+		if ( $candidate <= $today ) {
+			$candidate->modify( '+1 month' );
+		}
+
+		return $candidate->format( 'Y-m-d' );
+	}
 }
 
 class TR_Students {
@@ -267,7 +297,17 @@ check( has_substring( $lines, 'no IremboPay secret key' ), 'status: flags online
 check( has_substring( $lines, 'not scheduled' ), 'status: flags the missing cron event' );
 check( none_contain( $lines, 'raw' ) && none_contain( $lines, 'http' ), 'status: no URL-looking value in the output' );
 
-run_command( static fn() => $cmd->status( [], [ 'format' => 'json' ] ), 'status --format=json' );
+// Family 2 is active with billing_day=24 but no package — it can never
+// actually produce an invoice. Before is_billable() was shared with
+// next_billing_summary(), a stranded family like this surfaced as a
+// phantom "Next billing" date no admin could account for.
+check( has_substring( $lines, 'Next billing  26 Sep 2026 — 1 family due' ), 'status: "Next billing" is the 26th (family 5), not the 24th (stranded family 2 with no package)' );
+check( ! has_substring( $lines, '24 Sep' ), 'status: the stranded family never surfaces as a "Next billing" date' );
+
+$json_lines = run_command( static fn() => $cmd->status( [], [ 'format' => 'json' ] ), 'status --format=json' );
+check( has_substring( $json_lines, '"next_billing_date":"2026-09-26"' ), 'status --format=json: next_billing_date is 2026-09-26' );
+check( has_substring( $json_lines, '"next_billing_family_count":1' ), 'status --format=json: next_billing_family_count is 1, not 2' );
+
 run_command( static fn() => $cmd->status( [], [ 'format' => 'table' ] ), 'status --format=table' );
 
 // generate --dry-run and --dry-run --family=5

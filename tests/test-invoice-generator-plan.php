@@ -208,6 +208,38 @@ check( 'not_billing_day' === ( $skip_by_family[6] ?? null ), 'family 6 skipped: 
 check( 'already_invoiced' === ( $skip_by_family[7] ?? null ), 'family 7 skipped: already_invoiced' );
 check( 'zero_amount' === ( $skip_by_family[8] ?? null ), 'family 8 skipped: zero_amount' );
 
+// 1b. TR_Invoice_Generator::is_billable() directly — the shared gate
+//     extracted so `wp tangnest status`'s "next billing" figure and
+//     evaluate_family() can't drift into two different answers for
+//     "could this family ever produce an invoice right now".
+
+$billable_family = make_family( 1 );
+check( true === TR_Invoice_Generator::is_billable( $billable_family, TEST_TODAY )['billable'], 'is_billable(): a normal family is billable' );
+
+$no_package = make_family( 2, [ 'package_id' => null ] );
+check( false === TR_Invoice_Generator::is_billable( $no_package, TEST_TODAY )['billable']
+	&& 'no_package' === TR_Invoice_Generator::is_billable( $no_package, TEST_TODAY )['code'], 'is_billable(): no package is not billable' );
+
+$ended = make_family( 3, [ 'program_end_date' => '2020-01-01' ] );
+check( false === TR_Invoice_Generator::is_billable( $ended, TEST_TODAY )['billable']
+	&& 'ended' === TR_Invoice_Generator::is_billable( $ended, TEST_TODAY )['code'], 'is_billable(): an ended programme is not billable' );
+
+// Family 5 has no fixture entry in TEST_STUDENTS, i.e. no active children.
+$no_children = make_family( 5 );
+check( false === TR_Invoice_Generator::is_billable( $no_children, TEST_TODAY )['billable']
+	&& 'no_children' === TR_Invoice_Generator::is_billable( $no_children, TEST_TODAY )['code'], 'is_billable(): no active children is not billable' );
+
+$zero_amount = make_family( 8, [ 'monthly_amount' => 0 ] );
+check( false === TR_Invoice_Generator::is_billable( $zero_amount, TEST_TODAY )['billable']
+	&& 'zero_amount' === TR_Invoice_Generator::is_billable( $zero_amount, TEST_TODAY )['code'], 'is_billable(): a zero amount is not billable' );
+
+// A programme that has not started YET is still billable by this check —
+// only evaluate_family()'s separate not_started check excludes it from
+// today's run; is_billable() answers "will this family ever bill again",
+// not "should it bill today".
+$not_started_yet = make_family( 4, [ 'program_start_date' => '2099-01-01' ] );
+check( true === TR_Invoice_Generator::is_billable( $not_started_yet, TEST_TODAY )['billable'], 'is_billable(): a not-yet-started programme is still billable (start date is not one of the four checks)' );
+
 // 2. --family=<id> restricts both to_bill and skipped to that one family.
 
 reset_calls();
@@ -256,6 +288,38 @@ check( [ 1, 9 ] === $sent_family_ids, 'execute_plan(): emails went to families 1
 // skipped instead of billed — proves the whole loop is idempotent.
 $plan_after_exec = TR_Invoice_Generator::build_plan();
 check( empty( $plan_after_exec['to_bill'] ), 'after execute_plan(): nothing left to bill for this period' );
+
+// 4b. Equality boundaries. Nine of the real families' programme start
+//     date and billing day are both the 26th, so the 26th is an exact
+//     boundary in production, not just a hypothetical edge case: a
+//     programme starting exactly today must count as started (skip only
+//     when start_date is strictly AFTER today), and a programme ending
+//     exactly today must still bill (skip only when end_date is
+//     strictly BEFORE today — the programme runs through that day).
+//     Appended to the fixtures here, after every earlier unfiltered
+//     build_plan()/execute_plan() assertion above, so those counts don't
+//     need to account for two more always-billable families.
+
+$GLOBALS['TEST_FAMILIES'][]   = make_family( 10, [ 'program_start_date' => TEST_TODAY ] );
+$GLOBALS['TEST_FAMILIES'][]   = make_family( 11, [ 'program_end_date' => TEST_TODAY ] );
+$GLOBALS['TEST_STUDENTS'][10] = [ (object) [ 'first_name' => 'X', 'last_name' => 'Y' ] ];
+$GLOBALS['TEST_STUDENTS'][11] = [ (object) [ 'first_name' => 'X', 'last_name' => 'Y' ] ];
+
+reset_calls();
+$plan_start_today = TR_Invoice_Generator::build_plan( 10 );
+check( empty( $plan_start_today['skipped'] ), 'family 10 (program_start_date == today): not skipped' );
+check(
+	1 === count( $plan_start_today['to_bill'] ) && 10 === ( $plan_start_today['to_bill'][0]['family_id'] ?? null ),
+	'family 10 (program_start_date == today): bills today — a programme starting today has started, not "not yet"'
+);
+
+reset_calls();
+$plan_end_today = TR_Invoice_Generator::build_plan( 11 );
+check( empty( $plan_end_today['skipped'] ), 'family 11 (program_end_date == today): not skipped' );
+check(
+	1 === count( $plan_end_today['to_bill'] ) && 11 === ( $plan_end_today['to_bill'][0]['family_id'] ?? null ),
+	'family 11 (program_end_date == today): still bills — the programme runs through its last day, not up to it'
+);
 
 // 5. run() glues build_plan()+execute_plan()+the overdue sweep together,
 //    and logs skip reasons at the levels the old single-loop version did.
