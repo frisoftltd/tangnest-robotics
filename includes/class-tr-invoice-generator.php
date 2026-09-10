@@ -27,11 +27,11 @@ class TR_Invoice_Generator {
 				continue;
 			}
 
-			if ( ! empty( $family->program_start_date ) && $family->program_start_date > $today_str ) {
+			if ( TR_Families::is_date_set( $family->program_start_date ) && $family->program_start_date > $today_str ) {
 				continue;
 			}
 
-			if ( ! empty( $family->program_end_date ) && $family->program_end_date < $today_str ) {
+			if ( TR_Families::is_date_set( $family->program_end_date ) && $family->program_end_date < $today_str ) {
 				TR_Logger::info( 'Invoice generation skipped: family programme has ended', [
 					'family_id'        => $family_id,
 					'program_end_date' => $family->program_end_date,

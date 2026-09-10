@@ -26,27 +26,63 @@ class TR_Families {
 		return TR_DB::table_families();
 	}
 
+	/**
+	 * NULL, '' and the '0000-00-00' zero-date artifact (what a bare %s
+	 * placeholder silently turns a PHP null into — see normalize_date())
+	 * all mean "no date set". Used both to sanitize what gets written and,
+	 * by TR_Invoice_Generator, to decide what gets read as unset.
+	 */
+	public static function is_date_set( $value ): bool {
+		return null !== $value && '' !== $value && '0000-00-00' !== $value;
+	}
+
+	private static function normalize_date( $value ): ?string {
+		return self::is_date_set( $value ) ? $value : null;
+	}
+
+	/**
+	 * $wpdb->prepare() turns a null passed against a %s placeholder into an
+	 * empty string, not SQL NULL — which a DATE column then silently stores
+	 * as '0000-00-00'. Emitting the literal NULL keyword for an unset date,
+	 * instead of routing it through a %s placeholder at all, is what
+	 * actually gets a real NULL into the column.
+	 */
+	private static function date_fragment( ?string $value, array &$args ): string {
+		if ( null === $value ) {
+			return 'NULL';
+		}
+		$args[] = $value;
+		return '%s';
+	}
+
 	public static function insert( array $data ): int {
 		global $wpdb;
 		$now = current_time( 'mysql' );
 
+		$program_start_date = self::normalize_date( $data['program_start_date'] ?? null );
+		$program_end_date   = self::normalize_date( $data['program_end_date'] ?? null );
+
+		$args = [
+			absint( $data['parent_user_id'] ),
+			number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
+			! empty( $data['package_id'] ) ? absint( $data['package_id'] ) : null,
+			absint( $data['months_paid'] ?? 0 ),
+			$data['currency'] ?? 'RWF',
+			absint( $data['billing_day'] ?? 0 ),
+		];
+
+		$start_sql = self::date_fragment( $program_start_date, $args );
+		$end_sql   = self::date_fragment( $program_end_date, $args );
+
+		$args[] = in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active';
+		$args[] = ( $data['notes'] ?? '' ) !== '' ? sanitize_textarea_field( $data['notes'] ) : null;
+		$args[] = $now;
+		$args[] = $now;
+
 		$sql = $wpdb->prepare(
 			"INSERT INTO " . self::table() . " (parent_user_id, monthly_amount, package_id, months_paid, currency, billing_day, program_start_date, program_end_date, status, notes, created_at, updated_at)
-			 VALUES (%d, %s, %d, %d, %s, %d, %s, %s, %s, %s, %s, %s)",
-			[
-				absint( $data['parent_user_id'] ),
-				number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
-				! empty( $data['package_id'] ) ? absint( $data['package_id'] ) : null,
-				absint( $data['months_paid'] ?? 0 ),
-				$data['currency'] ?? 'RWF',
-				absint( $data['billing_day'] ?? 0 ),
-				( $data['program_start_date'] ?? '' ) !== '' ? $data['program_start_date'] : null,
-				( $data['program_end_date'] ?? '' ) !== '' ? $data['program_end_date'] : null,
-				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
-				( $data['notes'] ?? '' ) !== '' ? sanitize_textarea_field( $data['notes'] ) : null,
-				$now,
-				$now,
-			]
+			 VALUES (%d, %s, %d, %d, %s, %d, {$start_sql}, {$end_sql}, %s, %s, %s, %s)",
+			$args
 		);
 		$wpdb->query( $sql );
 
@@ -57,21 +93,28 @@ class TR_Families {
 		global $wpdb;
 		$now = current_time( 'mysql' );
 
+		$program_start_date = self::normalize_date( $data['program_start_date'] ?? null );
+		$program_end_date   = self::normalize_date( $data['program_end_date'] ?? null );
+
+		$args = [
+			number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
+			! empty( $data['package_id'] ) ? absint( $data['package_id'] ) : null,
+			absint( $data['months_paid'] ?? 0 ),
+			$data['currency'] ?? 'RWF',
+			absint( $data['billing_day'] ?? 0 ),
+		];
+
+		$start_sql = self::date_fragment( $program_start_date, $args );
+		$end_sql   = self::date_fragment( $program_end_date, $args );
+
+		$args[] = in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active';
+		$args[] = ( $data['notes'] ?? '' ) !== '' ? sanitize_textarea_field( $data['notes'] ) : null;
+		$args[] = $now;
+		$args[] = $id;
+
 		$sql = $wpdb->prepare(
-			"UPDATE " . self::table() . " SET monthly_amount = %s, package_id = %d, months_paid = %d, currency = %s, billing_day = %d, program_start_date = %s, program_end_date = %s, status = %s, notes = %s, updated_at = %s WHERE id = %d",
-			[
-				number_format( (float) ( $data['monthly_amount'] ?? 0 ), 2, '.', '' ),
-				! empty( $data['package_id'] ) ? absint( $data['package_id'] ) : null,
-				absint( $data['months_paid'] ?? 0 ),
-				$data['currency'] ?? 'RWF',
-				absint( $data['billing_day'] ?? 0 ),
-				( $data['program_start_date'] ?? '' ) !== '' ? $data['program_start_date'] : null,
-				( $data['program_end_date'] ?? '' ) !== '' ? $data['program_end_date'] : null,
-				in_array( $data['status'] ?? 'active', self::STATUSES, true ) ? $data['status'] : 'active',
-				( $data['notes'] ?? '' ) !== '' ? sanitize_textarea_field( $data['notes'] ) : null,
-				$now,
-				$id,
-			]
+			"UPDATE " . self::table() . " SET monthly_amount = %s, package_id = %d, months_paid = %d, currency = %s, billing_day = %d, program_start_date = {$start_sql}, program_end_date = {$end_sql}, status = %s, notes = %s, updated_at = %s WHERE id = %d",
+			$args
 		);
 
 		return false !== $wpdb->query( $sql );

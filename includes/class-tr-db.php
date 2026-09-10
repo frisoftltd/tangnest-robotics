@@ -58,6 +58,13 @@ class TR_DB {
 			self::migrate_backfill_invoice_period_dates();
 		}
 
+		// A brand new install writes dates through the fixed insert()/
+		// update() from the start (v0.8.6), so it can never have picked up
+		// the 0000-00-00 artifact this backfills away.
+		if ( $previous_version && version_compare( $previous_version, '0.8.6', '<' ) ) {
+			self::migrate_zero_program_dates_to_null();
+		}
+
 		update_option( self::DB_VERSION_OPTION, TANGNEST_ROBOTICS_DB_VERSION );
 	}
 
@@ -153,6 +160,33 @@ class TR_DB {
 
 		TR_Logger::info( 'v0.8.1 migration: invoice period dates backfilled', [
 			'rows_updated' => $updated,
+		] );
+	}
+
+	/**
+	 * v0.8.6 fixes TR_Families::insert()/update() passing a null program
+	 * date through a %s placeholder, which $wpdb->prepare() silently turns
+	 * into an empty string — and which a DATE column then just as silently
+	 * stores as '0000-00-00' instead of NULL. TR_Invoice_Generator read that
+	 * zero date as a real, long-past end date and permanently skipped the
+	 * family. This backfills every existing zero date to NULL so those
+	 * families bill again; new writes can no longer produce one. Runs once,
+	 * as part of the version-gated upgrade above.
+	 */
+	private static function migrate_zero_program_dates_to_null(): void {
+		global $wpdb;
+		$families_table = self::table_families();
+
+		$start_updated = $wpdb->query(
+			"UPDATE {$families_table} SET program_start_date = NULL WHERE program_start_date = '0000-00-00'"
+		);
+		$end_updated = $wpdb->query(
+			"UPDATE {$families_table} SET program_end_date = NULL WHERE program_end_date = '0000-00-00'"
+		);
+
+		TR_Logger::info( 'v0.8.6 migration: zero program dates converted to NULL', [
+			'program_start_date_rows' => false !== $start_updated ? (int) $start_updated : 0,
+			'program_end_date_rows'   => false !== $end_updated ? (int) $end_updated : 0,
 		] );
 	}
 
