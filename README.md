@@ -31,13 +31,21 @@ itself.
 
 A one-screen overview: families, children, packages, invoices, money,
 the next billing date, cron, online payments and the debug-log toggle —
-plus anything worth flagging (a family with no package, an active
-package with no product code and no site-wide default, a missing cron
-event, online payments enabled with no secret key).
+plus anything worth flagging (an active package with no product code
+and no site-wide default, a missing cron event, online payments enabled
+with no secret key), and a dedicated **Cannot be billed** list of every
+active family that `TR_Invoice_Generator::is_billable()` would reject
+right now — no package, no active children, a zero monthly amount, or
+an already-ended programme — with its family ID, parent name, and the
+specific reason. The "next billing" figure above only ever counts
+families that pass that same check, so a family stranded here can never
+silently pollute it with a date it will never actually reach. An active
+family that will never be invoiced is a silent revenue leak; this makes
+it visible instead of just excluding it from the projection.
 
 ```
 $ wp tangnest status
-Tangnest Robotics 0.9.0  (DB 0.8.6)
+Tangnest Robotics 0.9.2  (DB 0.8.6)
 
 Families      9 active, 0 inactive
 Children      14
@@ -52,6 +60,19 @@ Online pay    enabled, product code set
 Debug log     off
 
 No issues found.
+
+Cannot be billed: none.
+```
+
+```
+$ wp tangnest status
+...
+2 issue(s):
+  - 1 active family cannot be billed — see "Cannot be billed" below
+  - ...
+
+Cannot be billed (1)
+  #2  Test family  family has no package
 ```
 
 ### `wp tangnest generate --dry-run`
@@ -126,6 +147,18 @@ DRY RUN — no email was sent.
 ```
 
 ## Changelog
+
+### v0.9.2
+- New: `wp tangnest status` lists every active family that
+  `TR_Invoice_Generator::is_billable()` rejects under a dedicated
+  "Cannot be billed" heading — family ID, parent name, and the specific
+  reason (no package, no active children, zero amount, or an
+  already-ended programme). An active family that will never be
+  invoiced is a silent revenue leak; it's now surfaced, not just
+  excluded from the "next billing" projection
+- The billability check now runs once per family and is shared by both
+  the "next billing" projection and the new list, so the two can never
+  disagree about which families are stranded
 
 ### v0.9.1
 - Fix: `wp tangnest status`'s "Next billing" figure could report a date

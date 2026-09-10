@@ -50,10 +50,10 @@ class TR_CLI_Command {
 		$families_inactive   = TR_Families::count( [ 'status' => 'inactive' ] );
 		$families_completed  = TR_Families::count( [ 'status' => 'completed' ] );
 
-		$active_families = TR_Families::get_list( [ 'status' => 'active', 'per_page' => 10000 ] );
-		$families_without_package = array_values( array_filter( $active_families, static function ( $f ) {
-			return empty( $f->package_id );
-		} ) );
+		$active_families  = TR_Families::get_list( [ 'status' => 'active', 'per_page' => 10000 ] );
+		$today_str        = current_time( 'Y-m-d' );
+		$billability      = self::billability_by_family( $active_families, $today_str );
+		$cannot_be_billed = self::cannot_be_billed_rows( $active_families, $billability );
 
 		$children_active = TR_Students::count( [ 'status' => 'active' ] );
 
@@ -77,7 +77,7 @@ class TR_CLI_Command {
 		$month_end            = current_time( 'Y-m-t' );
 		$collected_this_month = TR_Invoices::collected_in_period( $month_start, $month_end );
 
-		[ $next_billing_date, $next_billing_count ] = self::next_billing_summary( $active_families );
+		[ $next_billing_date, $next_billing_count ] = self::next_billing_summary( $active_families, $billability );
 
 		$cron_next_ts = wp_next_scheduled( TR_Cron::HOOK );
 
@@ -88,8 +88,12 @@ class TR_CLI_Command {
 		$debug_on = TR_Logger::debug_enabled();
 
 		$issues = [];
-		foreach ( $families_without_package as $f ) {
-			$issues[] = sprintf( 'family %d has no package assigned', (int) $f->id );
+		if ( ! empty( $cannot_be_billed ) ) {
+			$issues[] = sprintf(
+				'%d active famil%s cannot be billed — see "Cannot be billed" below',
+				count( $cannot_be_billed ),
+				1 === count( $cannot_be_billed ) ? 'y' : 'ies'
+			);
 		}
 		foreach ( $packages_without_code as $p ) {
 			$issues[] = sprintf( 'package "%s" (id %d) has no product code and no site-wide default is set', $p->name, (int) $p->id );
@@ -125,6 +129,7 @@ class TR_CLI_Command {
 			'online_pay_default_code_set' => '' !== $default_product_code,
 			'debug_log'                   => $debug_on,
 			'issues'                      => $issues,
+			'cannot_be_billed'            => $cannot_be_billed,
 		];
 
 		if ( in_array( $format, [ 'json', 'yaml' ], true ) ) {
@@ -135,7 +140,7 @@ class TR_CLI_Command {
 		if ( in_array( $format, [ 'table', 'csv' ], true ) ) {
 			$rows = [];
 			foreach ( $data as $key => $value ) {
-				if ( 'issues' === $key ) {
+				if ( in_array( $key, [ 'issues', 'cannot_be_billed' ], true ) ) {
 					continue;
 				}
 				$rows[] = [ 'metric' => $key, 'value' => self::scalar_for_display( $value ) ];
@@ -144,6 +149,11 @@ class TR_CLI_Command {
 				$rows[] = [ 'metric' => 'issue', 'value' => $issue ];
 			}
 			\WP_CLI\Utils\format_items( $format, $rows, [ 'metric', 'value' ] );
+
+			if ( ! empty( $data['cannot_be_billed'] ) ) {
+				WP_CLI::line( '' );
+				\WP_CLI\Utils\format_items( $format, $data['cannot_be_billed'], [ 'family_id', 'parent_name', 'code', 'reason' ] );
+			}
 			return;
 		}
 
@@ -623,6 +633,52 @@ class TR_CLI_Command {
 	}
 
 	/**
+	 * TR_Invoice_Generator::is_billable() for every active family, keyed
+	 * by family ID — computed once and shared by next_billing_summary()
+	 * (which needs to know what to exclude from the projection) and
+	 * cannot_be_billed_rows() (which needs to know what to list, and
+	 * why), so the two can never disagree about which families are
+	 * stranded.
+	 */
+	private static function billability_by_family( array $active_families, string $today_str ): array {
+		$billability = [];
+		foreach ( $active_families as $family ) {
+			$billability[ (int) $family->id ] = TR_Invoice_Generator::is_billable( $family, $today_str );
+		}
+		return $billability;
+	}
+
+	/**
+	 * An active family that fails is_billable() is a silent revenue
+	 * leak — it looks active on the Families screen but will never
+	 * actually be invoiced until someone fixes it. Listed explicitly
+	 * (family ID, parent name, and the specific reason) rather than
+	 * folded into the generic $issues list, since an admin needs to know
+	 * exactly which families and why, not just that "some" are affected.
+	 */
+	private static function cannot_be_billed_rows( array $active_families, array $billability ): array {
+		$rows = [];
+
+		foreach ( $active_families as $family ) {
+			$result = $billability[ (int) $family->id ];
+			if ( $result['billable'] ) {
+				continue;
+			}
+
+			$user = get_userdata( (int) $family->parent_user_id );
+
+			$rows[] = [
+				'family_id'   => (int) $family->id,
+				'parent_name' => $user ? $user->display_name : '(no WordPress user)',
+				'code'        => $result['code'],
+				'reason'      => $result['message'],
+			];
+		}
+
+		return $rows;
+	}
+
+	/**
 	 * The nearest upcoming billing date among active, currently-billable
 	 * families with a set billing anchor, and how many share it —
 	 * TR_Families::next_billing_date() already knows how to project one
@@ -636,16 +692,15 @@ class TR_CLI_Command {
 	 * amount) doesn't surface here as a phantom "next billing" date it
 	 * will never actually reach.
 	 */
-	private static function next_billing_summary( array $active_families ): array {
-		$today_str = current_time( 'Y-m-d' );
-		$by_date   = [];
+	private static function next_billing_summary( array $active_families, array $billability ): array {
+		$by_date = [];
 
 		foreach ( $active_families as $family ) {
 			if ( (int) $family->billing_day < 1 ) {
 				continue;
 			}
 
-			if ( ! TR_Invoice_Generator::is_billable( $family, $today_str )['billable'] ) {
+			if ( ! $billability[ (int) $family->id ]['billable'] ) {
 				continue;
 			}
 
@@ -709,12 +764,28 @@ class TR_CLI_Command {
 
 		if ( empty( $data['issues'] ) ) {
 			WP_CLI::line( 'No issues found.' );
+		} else {
+			WP_CLI::line( sprintf( '%d issue(s):', count( $data['issues'] ) ) );
+			foreach ( $data['issues'] as $issue ) {
+				WP_CLI::line( '  - ' . $issue );
+			}
+		}
+
+		WP_CLI::line( '' );
+
+		// An active family failing is_billable() looks fine on the Families
+		// screen and is otherwise invisible — this is deliberately always
+		// printed, not folded into "No issues found.", so it can never be
+		// silently skipped past the way it was before is_billable() was
+		// shared with the "next billing" projection.
+		if ( empty( $data['cannot_be_billed'] ) ) {
+			WP_CLI::line( 'Cannot be billed: none.' );
 			return;
 		}
 
-		WP_CLI::line( sprintf( '%d issue(s):', count( $data['issues'] ) ) );
-		foreach ( $data['issues'] as $issue ) {
-			WP_CLI::line( '  - ' . $issue );
+		WP_CLI::line( sprintf( 'Cannot be billed (%d)', count( $data['cannot_be_billed'] ) ) );
+		foreach ( $data['cannot_be_billed'] as $row ) {
+			WP_CLI::line( sprintf( '  #%d  %s  %s', $row['family_id'], $row['parent_name'], $row['reason'] ) );
 		}
 	}
 

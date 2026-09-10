@@ -304,7 +304,17 @@ check( none_contain( $lines, 'raw' ) && none_contain( $lines, 'http' ), 'status:
 check( has_substring( $lines, 'Next billing  26 Sep 2026 — 1 family due' ), 'status: "Next billing" is the 26th (family 5), not the 24th (stranded family 2 with no package)' );
 check( ! has_substring( $lines, '24 Sep' ), 'status: the stranded family never surfaces as a "Next billing" date' );
 
+// v0.9.2: families 2 and 6 are both active with no package — both must
+// be listed under "Cannot be billed" with their ID, parent name, and
+// the specific reason, not just silently excluded from the projection.
+check( has_substring( $lines, 'Cannot be billed (2)' ), 'status: "Cannot be billed" heading shows the count of unbillable active families' );
+check( has_substring( $lines, '#2  No Package Parent  family has no package' ), 'status: family 2 listed with ID, parent name, and reason' );
+check( has_substring( $lines, '#6  No Package Parent  family has no package' ), 'status: family 6 listed with ID, parent name, and reason' );
+check( has_substring( $lines, 'cannot be billed — see "Cannot be billed" below' ), 'status: the issues summary points at the dedicated section instead of repeating each family' );
+
 $json_lines = run_command( static fn() => $cmd->status( [], [ 'format' => 'json' ] ), 'status --format=json' );
+check( has_substring( $json_lines, '"family_id":2' ) && has_substring( $json_lines, '"family_id":6' ), 'status --format=json: cannot_be_billed includes both family 2 and 6' );
+check( has_substring( $json_lines, '"code":"no_package"' ), 'status --format=json: cannot_be_billed rows carry the specific reason code' );
 check( has_substring( $json_lines, '"next_billing_date":"2026-09-26"' ), 'status --format=json: next_billing_date is 2026-09-26' );
 check( has_substring( $json_lines, '"next_billing_family_count":1' ), 'status --format=json: next_billing_family_count is 1, not 2' );
 
