@@ -235,7 +235,6 @@ class TR_Notifications {
 			return false;
 		}
 
-		$students      = self::decode_invoice_snapshot( $invoice );
 		$message_token = TR_Message_Tokens::get_or_generate( (int) $family->id );
 		$access_url    = TR_Message_Tokens::build_url( $message_token );
 		$pay_url       = self::pay_url_with_token( (int) $invoice->id, $message_token );
@@ -245,7 +244,7 @@ class TR_Notifications {
 			$days_overdue = max( 0, (int) floor( ( current_time( 'timestamp' ) - strtotime( $invoice->due_date ) ) / DAY_IN_SECONDS ) );
 		}
 
-		$body = self::render_reminder_template( $user, $invoice, $students, $days_overdue, $access_url, $pay_url );
+		$body = self::render_reminder_template( $user, $invoice, $days_overdue, $access_url, $pay_url );
 
 		return self::send(
 			$user->user_email,
@@ -274,10 +273,57 @@ class TR_Notifications {
 		return ob_get_clean();
 	}
 
-	private static function render_reminder_template( WP_User $user, object $invoice, array $students, int $days_overdue, string $access_url, string $pay_url ): string {
+	private static function render_reminder_template( WP_User $user, object $invoice, int $days_overdue, string $access_url, string $pay_url ): string {
 		ob_start();
 		include TANGNEST_ROBOTICS_PLUGIN_DIR . 'templates/emails/reminder.php';
 		return ob_get_clean();
+	}
+
+	/**
+	 * Single-line reminder sentence shared by the reminder email and the
+	 * reminder WhatsApp message. Day count comes from $due_date against
+	 * current_time( 'Y-m-d' ) — whole days, not hours, so a reminder sent
+	 * late at night doesn't undercount by comparing against the current
+	 * timestamp instead of the calendar date.
+	 */
+	public static function reminder_due_line( string $due_date ): string {
+		$today    = current_time( 'Y-m-d' );
+		$due_ymd  = substr( $due_date, 0, 10 );
+		$day_diff = (int) round( ( strtotime( $due_ymd ) - strtotime( $today ) ) / DAY_IN_SECONDS );
+
+		if ( $day_diff > 1 ) {
+			return sprintf(
+				/* translators: %d: number of days until the payment is due */
+				_n(
+					'We kindly remind you that your payment is due in %d day.',
+					'We kindly remind you that your payment is due in %d days.',
+					$day_diff,
+					'tangnest-robotics'
+				),
+				$day_diff
+			);
+		}
+
+		if ( 1 === $day_diff ) {
+			return __( 'We kindly remind you that your payment is due tomorrow.', 'tangnest-robotics' );
+		}
+
+		if ( 0 === $day_diff ) {
+			return __( 'We kindly remind you that your payment is due today.', 'tangnest-robotics' );
+		}
+
+		$overdue_days = abs( $day_diff );
+
+		return sprintf(
+			/* translators: %d: number of days the payment is overdue */
+			_n(
+				'We kindly remind you that your payment is %d day overdue.',
+				'We kindly remind you that your payment is %d days overdue.',
+				$overdue_days,
+				'tangnest-robotics'
+			),
+			$overdue_days
+		);
 	}
 
 	/**

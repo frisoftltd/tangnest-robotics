@@ -4,10 +4,9 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
  * Payment reminder email body. Included by
  * TR_Notifications::render_reminder_template() with $user (WP_User),
  * $invoice (object: period, amount, currency, due_date, status),
- * $students (array, same shape as invoice-issued.php), $days_overdue (int,
- * 0 unless the invoice is actually overdue), $access_url and $pay_url
- * already in scope. Same inline-CSS, table-safe, max-width 600px layout
- * as welcome.php.
+ * $days_overdue (int, 0 unless the invoice is actually overdue),
+ * $access_url and $pay_url already in scope. Same inline-CSS, table-safe,
+ * max-width 600px layout as welcome.php.
  *
  * Both carry a message token (spec v0.7.0) minted fresh for this one send
  * — independent of the device-bound access token, so this email can never
@@ -41,7 +40,7 @@ $is_overdue = $days_overdue > 0;
 						</p>
 
 						<p style="font-size:15px;line-height:1.6;margin:0 0 20px;">
-							<?php esc_html_e( 'This is your Tangnest Robotics parent account. From here, you’ll be able to manage and pay your child’s INTYOZA LAB access fees.', 'tangnest-robotics' ); ?>
+							<?php echo esc_html( TR_Notifications::reminder_due_line( $invoice->due_date ) ); ?>
 						</p>
 
 						<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 20px;border:1px solid <?php echo $is_overdue ? '#f6c9c4' : '#e2e5eb'; ?>;border-radius:8px;background:<?php echo $is_overdue ? '#fdeaea' : '#ffffff'; ?>;">
@@ -74,19 +73,6 @@ $is_overdue = $days_overdue > 0;
 								</td>
 							</tr>
 						</table>
-
-						<?php if ( ! empty( $students ) ) : ?>
-							<p style="font-size:15px;line-height:1.6;margin:0 0 8px;font-weight:bold;"><?php esc_html_e( 'This covers:', 'tangnest-robotics' ); ?></p>
-							<ul style="font-size:15px;line-height:1.6;margin:0 0 20px;padding-left:20px;">
-								<?php foreach ( $students as $student ) : ?>
-									<li><?php echo esc_html( $student['student_name'] ?? '' ); ?></li>
-								<?php endforeach; ?>
-							</ul>
-						<?php endif; ?>
-
-						<p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
-							<?php esc_html_e( 'If you have already paid, please let Tangnest know so we can update your record — sorry for the reminder in that case.', 'tangnest-robotics' ); ?>
-						</p>
 
 						<?php if ( '' !== $pay_url && TR_IremboPay_Settings::is_enabled() && TR_Payment::is_payable( $invoice ) ) : ?>
 							<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0;">

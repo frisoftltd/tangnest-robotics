@@ -446,12 +446,13 @@ class TR_Invoice_Actions {
 
 		$lines = [
 			sprintf( __( 'Hello %s,', 'tangnest-robotics' ), $user->display_name ),
-			__( 'This is your Tangnest Robotics parent account. From here, you’ll be able to manage and pay your child’s INTYOZA LAB access fees.', 'tangnest-robotics' ),
+			TR_Notifications::reminder_due_line( $invoice->due_date ),
 			sprintf(
-				/* translators: 1: amount and currency, 2: billing period */
-				__( 'This is a reminder that %1$s is due for your Tangnest Robotics payment (%2$s).', 'tangnest-robotics' ),
+				/* translators: 1: amount and currency, 2: billing period (with date range when known), 3: due date */
+				__( '%1$s — period %2$s, due %3$s.', 'tangnest-robotics' ),
 				number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency,
-				$invoice->period
+				TR_Invoices::period_label_with_range( $invoice ),
+				date_i18n( get_option( 'date_format' ), strtotime( $invoice->due_date ) )
 			),
 		];
 
