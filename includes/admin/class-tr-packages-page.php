@@ -48,12 +48,21 @@ class TR_Packages_Page {
 			$errors[] = __( 'IremboPay product code must look like PC- followed by letters/numbers.', 'tangnest-robotics' );
 		}
 
+		$course      = isset( $_POST['course'] ) ? sanitize_text_field( wp_unslash( $_POST['course'] ) ) : '';
+		$child_count = isset( $_POST['child_count'] ) ? absint( $_POST['child_count'] ) : 0;
+
 		if ( 'active' === $status ) {
 			if ( $default_fee <= 0 ) {
 				$errors[] = __( 'Monthly amount is required for an active package — this is what a family on it is billed.', 'tangnest-robotics' );
 			}
 			if ( '' === $product_code ) {
 				$errors[] = __( 'A product code is required for an active package — without one, families on it cannot pay online.', 'tangnest-robotics' );
+			}
+			if ( '' === $course ) {
+				$errors[] = __( 'Course is required for an active package — it is used to match a family to the right package automatically.', 'tangnest-robotics' );
+			}
+			if ( $child_count < 1 || $child_count > 3 ) {
+				$errors[] = __( 'Number of children is required for an active package and must be 1, 2 or 3.', 'tangnest-robotics' );
 			}
 		}
 
@@ -83,6 +92,8 @@ class TR_Packages_Page {
 			'duration_months'        => $duration_months,
 			'default_monthly_fee'    => $default_fee,
 			'irembopay_product_code' => $product_code,
+			'course'                 => $course,
+			'child_count'            => $child_count,
 			'start_date'             => $start_date,
 			'notes'                  => $notes,
 			'status'                 => $status,
@@ -135,6 +146,8 @@ class TR_Packages_Page {
 					'duration_months'        => $package->duration_months,
 					'default_monthly_fee'    => $package->default_monthly_fee,
 					'irembopay_product_code' => $package->irembopay_product_code,
+					'course'                 => $package->course,
+					'child_count'            => $package->child_count,
 					'start_date'             => $package->start_date,
 					'notes'                  => $package->notes,
 					'status'                 => 'inactive',
@@ -227,6 +240,25 @@ class TR_Packages_Page {
 					<tr>
 						<th><label for="tr-name"><?php esc_html_e( 'Name', 'tangnest-robotics' ); ?></label></th>
 						<td><input type="text" id="tr-name" name="name" class="regular-text" required value="<?php echo esc_attr( $program->name ?? '' ); ?>"></td>
+					</tr>
+					<tr>
+						<th><label for="tr-course"><?php esc_html_e( 'Course', 'tangnest-robotics' ); ?></label></th>
+						<td>
+							<input type="text" id="tr-course" name="course" class="regular-text" value="<?php echo esc_attr( $program->course ?? '' ); ?>">
+							<p class="description"><?php esc_html_e( 'Required for an active package. Used to match a family to the right package automatically when its child count changes.', 'tangnest-robotics' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="tr-child-count"><?php esc_html_e( 'Number of children', 'tangnest-robotics' ); ?></label></th>
+						<td>
+							<select id="tr-child-count" name="child_count">
+								<option value=""><?php esc_html_e( '— Select —', 'tangnest-robotics' ); ?></option>
+								<?php foreach ( [ 1, 2, 3 ] as $n ) : ?>
+									<option value="<?php echo esc_attr( $n ); ?>" <?php selected( (int) ( $program->child_count ?? 0 ), $n ); ?>><?php echo esc_html( $n ); ?></option>
+								<?php endforeach; ?>
+							</select>
+							<p class="description"><?php esc_html_e( 'Required for an active package.', 'tangnest-robotics' ); ?></p>
+						</td>
 					</tr>
 					<tr>
 						<th><label for="tr-product-code"><?php esc_html_e( 'IremboPay product code', 'tangnest-robotics' ); ?></label></th>
@@ -332,6 +364,8 @@ class TR_Packages_Page {
 			<thead>
 				<tr>
 					<th><?php esc_html_e( 'Name', 'tangnest-robotics' ); ?></th>
+					<th><?php esc_html_e( 'Course', 'tangnest-robotics' ); ?></th>
+					<th><?php esc_html_e( 'Children', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Product Code', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Monthly Amount', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Duration', 'tangnest-robotics' ); ?></th>
@@ -343,7 +377,7 @@ class TR_Packages_Page {
 			</thead>
 			<tbody>
 				<?php if ( empty( $programs ) ) : ?>
-					<tr><td colspan="8"><?php esc_html_e( 'No packages yet.', 'tangnest-robotics' ); ?></td></tr>
+					<tr><td colspan="10"><?php esc_html_e( 'No packages yet.', 'tangnest-robotics' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $programs as $program ) : ?>
 						<?php
@@ -353,6 +387,8 @@ class TR_Packages_Page {
 						?>
 						<tr>
 							<td><?php echo esc_html( $program->name ); ?></td>
+							<td><?php echo esc_html( $program->course ?? '' ); ?></td>
+							<td><?php echo esc_html( $program->child_count ? (string) $program->child_count : '' ); ?></td>
 							<td>
 								<?php echo esc_html( $program->irembopay_product_code ?? '' ); ?>
 								<?php if ( $missing_code ) : ?>

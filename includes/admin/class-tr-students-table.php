@@ -204,15 +204,15 @@ class TR_Students_Table extends WP_List_Table {
 		];
 
 		if ( 'active' === $item->status ) {
-			$withdraw_url = wp_nonce_url(
-				add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_STUDENTS, 'tr_row_action' => 'withdraw', 'id' => $item->id ], admin_url( 'admin.php' ) ),
+			$deactivate_url = wp_nonce_url(
+				add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_STUDENTS, 'tr_row_action' => 'deactivate', 'id' => $item->id ], admin_url( 'admin.php' ) ),
 				'tr_student_row_action_' . $item->id
 			);
-			$actions['withdraw'] = sprintf(
+			$actions['deactivate'] = sprintf(
 				'<a href="%s" onclick="return confirm(\'%s\');">%s</a>',
-				esc_url( $withdraw_url ),
-				esc_js( __( 'Withdraw this student?', 'tangnest-robotics' ) ),
-				esc_html__( 'Withdraw', 'tangnest-robotics' )
+				esc_url( $deactivate_url ),
+				esc_js( __( 'Deactivate this student?', 'tangnest-robotics' ) ),
+				esc_html__( 'Deactivate', 'tangnest-robotics' )
 			);
 		} elseif ( 'withdrawn' === $item->status ) {
 			$reactivate_url = wp_nonce_url(

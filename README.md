@@ -148,6 +148,13 @@ DRY RUN — no email was sent.
 
 ## Changelog
 
+### v0.9.3
+- New: Students can be deactivated and reactivated, from both the Students list and the family screen
+- New: Packages record their course and child count, so the right package can be matched automatically
+- New: Warning and pre-selection when a family's child count no longer matches its package
+- New: Option to update the current month's unpaid invoice when a package changes
+- Changed: Inactive children now show greyed out on the parent dashboard
+
 ### v0.9.2
 - New: `wp tangnest status` lists every active family that
   `TR_Invoice_Generator::is_billable()` rejects under a dedicated

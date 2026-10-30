@@ -54,6 +54,7 @@ class TR_CLI_Command {
 		$today_str        = current_time( 'Y-m-d' );
 		$billability      = self::billability_by_family( $active_families, $today_str );
 		$cannot_be_billed = self::cannot_be_billed_rows( $active_families, $billability );
+		$package_mismatch = self::package_mismatch_rows( $active_families );
 
 		$children_active = TR_Students::count( [ 'status' => 'active' ] );
 
@@ -95,8 +96,20 @@ class TR_CLI_Command {
 				1 === count( $cannot_be_billed ) ? 'y' : 'ies'
 			);
 		}
+		if ( ! empty( $package_mismatch ) ) {
+			$issues[] = sprintf(
+				'%d famil%s on a package whose size doesn\'t match active children — see "Package mismatch" below',
+				count( $package_mismatch ),
+				1 === count( $package_mismatch ) ? 'y is' : 'ies are'
+			);
+		}
 		foreach ( $packages_without_code as $p ) {
 			$issues[] = sprintf( 'package "%s" (id %d) has no product code and no site-wide default is set', $p->name, (int) $p->id );
+		}
+		foreach ( $active_packages as $p ) {
+			if ( empty( $p->course ) || empty( $p->child_count ) ) {
+				$issues[] = sprintf( 'package "%s" (id %d) is missing course and/or child count — see the v0.9.3 migration log, or edit it directly', $p->name, (int) $p->id );
+			}
 		}
 		if ( false === $cron_next_ts ) {
 			$issues[] = sprintf( 'cron event "%s" is not scheduled', TR_Cron::HOOK );
@@ -130,6 +143,7 @@ class TR_CLI_Command {
 			'debug_log'                   => $debug_on,
 			'issues'                      => $issues,
 			'cannot_be_billed'            => $cannot_be_billed,
+			'package_mismatch'            => $package_mismatch,
 		];
 
 		if ( in_array( $format, [ 'json', 'yaml' ], true ) ) {
@@ -140,7 +154,7 @@ class TR_CLI_Command {
 		if ( in_array( $format, [ 'table', 'csv' ], true ) ) {
 			$rows = [];
 			foreach ( $data as $key => $value ) {
-				if ( in_array( $key, [ 'issues', 'cannot_be_billed' ], true ) ) {
+				if ( in_array( $key, [ 'issues', 'cannot_be_billed', 'package_mismatch' ], true ) ) {
 					continue;
 				}
 				$rows[] = [ 'metric' => $key, 'value' => self::scalar_for_display( $value ) ];
@@ -153,6 +167,11 @@ class TR_CLI_Command {
 			if ( ! empty( $data['cannot_be_billed'] ) ) {
 				WP_CLI::line( '' );
 				\WP_CLI\Utils\format_items( $format, $data['cannot_be_billed'], [ 'family_id', 'parent_name', 'code', 'reason' ] );
+			}
+
+			if ( ! empty( $data['package_mismatch'] ) ) {
+				WP_CLI::line( '' );
+				\WP_CLI\Utils\format_items( $format, $data['package_mismatch'], [ 'family_id', 'parent_name', 'active_children', 'package_child_count', 'package_name' ] );
 			}
 			return;
 		}
@@ -679,6 +698,45 @@ class TR_CLI_Command {
 	}
 
 	/**
+	 * An active family whose active child count no longer matches its
+	 * package's child_count (v0.9.3) — e.g. a child deactivated without the
+	 * package being switched to match. Packages with no child_count set yet
+	 * are skipped here, not double-counted — they're already flagged
+	 * separately as "needs review" in the generic $issues list above.
+	 */
+	private static function package_mismatch_rows( array $active_families ): array {
+		$rows = [];
+
+		foreach ( $active_families as $family ) {
+			if ( empty( $family->package_id ) ) {
+				continue;
+			}
+
+			$package = TR_Programs::get( (int) $family->package_id );
+			if ( null === $package || empty( $package->child_count ) ) {
+				continue;
+			}
+
+			$active_children = TR_Students::count( [ 'family_id' => (int) $family->id, 'status' => 'active' ] );
+			if ( $active_children === (int) $package->child_count ) {
+				continue;
+			}
+
+			$user = get_userdata( (int) $family->parent_user_id );
+
+			$rows[] = [
+				'family_id'           => (int) $family->id,
+				'parent_name'         => $user ? $user->display_name : '(no WordPress user)',
+				'active_children'     => $active_children,
+				'package_child_count' => (int) $package->child_count,
+				'package_name'        => $package->name,
+			];
+		}
+
+		return $rows;
+	}
+
+	/**
 	 * The nearest upcoming billing date among active, currently-billable
 	 * families with a set billing anchor, and how many share it —
 	 * TR_Families::next_billing_date() already knows how to project one
@@ -780,12 +838,30 @@ class TR_CLI_Command {
 		// shared with the "next billing" projection.
 		if ( empty( $data['cannot_be_billed'] ) ) {
 			WP_CLI::line( 'Cannot be billed: none.' );
+		} else {
+			WP_CLI::line( sprintf( 'Cannot be billed (%d)', count( $data['cannot_be_billed'] ) ) );
+			foreach ( $data['cannot_be_billed'] as $row ) {
+				WP_CLI::line( sprintf( '  #%d  %s  %s', $row['family_id'], $row['parent_name'], $row['reason'] ) );
+			}
+		}
+
+		WP_CLI::line( '' );
+
+		if ( empty( $data['package_mismatch'] ) ) {
+			WP_CLI::line( 'Package mismatch: none.' );
 			return;
 		}
 
-		WP_CLI::line( sprintf( 'Cannot be billed (%d)', count( $data['cannot_be_billed'] ) ) );
-		foreach ( $data['cannot_be_billed'] as $row ) {
-			WP_CLI::line( sprintf( '  #%d  %s  %s', $row['family_id'], $row['parent_name'], $row['reason'] ) );
+		WP_CLI::line( sprintf( 'Package mismatch (%d)', count( $data['package_mismatch'] ) ) );
+		foreach ( $data['package_mismatch'] as $row ) {
+			WP_CLI::line( sprintf(
+				'  #%d  %s  %d active child(ren) on "%s" (sized for %d)',
+				$row['family_id'],
+				$row['parent_name'],
+				$row['active_children'],
+				$row['package_name'],
+				$row['package_child_count']
+			) );
 		}
 	}
 

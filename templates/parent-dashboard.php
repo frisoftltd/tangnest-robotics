@@ -90,7 +90,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 				<div class="tr-dashboard__cards">
 					<?php foreach ( $students as $student ) : ?>
-						<div class="tr-dashboard__card">
+						<div class="tr-dashboard__card<?php echo 'active' !== $student->status ? ' tr-dashboard__card--inactive' : ''; ?>">
 							<h3><?php echo esc_html( trim( $student->first_name . ' ' . $student->last_name ) ); ?></h3>
 							<p class="tr-dashboard__program"><?php echo esc_html( $family_package->name ?? __( 'No package yet', 'tangnest-robotics' ) ); ?></p>
 							<?php if ( $family_package ) : ?>
@@ -99,7 +99,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 									<div class="tr-dashboard__progress-fill" style="width: <?php echo esc_attr( $family_percent ); ?>%;"></div>
 								</div>
 							<?php endif; ?>
-							<p class="tr-dashboard__status tr-dashboard__status--<?php echo esc_attr( $student->status ); ?>"><?php echo esc_html( ucfirst( $student->status ) ); ?></p>
+							<p class="tr-dashboard__status tr-dashboard__status--<?php echo esc_attr( $student->status ); ?>"><?php echo esc_html( 'active' === $student->status ? __( 'Active', 'tangnest-robotics' ) : __( 'Inactive', 'tangnest-robotics' ) ); ?></p>
 						</div>
 					<?php endforeach; ?>
 				</div>

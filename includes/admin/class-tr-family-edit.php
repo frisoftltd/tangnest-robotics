@@ -243,11 +243,103 @@ class TR_Family_Edit {
 			TR_Notifications::maybe_send_welcome_email( $user_id, $family_id );
 		}
 
+		// v0.9.3: a package change can leave the current month's already-
+		// issued invoice priced for the old package. Never re-priced
+		// automatically — stash what's on offer and let render() present it
+		// as an explicit, dismissible choice on the next load.
+		if ( $existing_family && (int) $existing_family->package_id !== $package_id ) {
+			self::maybe_stash_invoice_offer( $family_id, $package );
+		}
+
 		wp_safe_redirect( add_query_arg( [
 			'page'    => TR_Admin_Menu::PAGE_FAMILIES,
 			'action'  => 'edit',
 			'id'      => $family_id,
 			'updated' => 1,
+		], admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private static function invoice_offer_key(): string {
+		return 'tr_invoice_offer_' . get_current_user_id();
+	}
+
+	/**
+	 * Only the CURRENT period's invoice is ever considered — a past
+	 * period's invoice is never looked up here, so it can never be touched
+	 * by this flow. A paid/waived/cancelled current invoice is reported as
+	 * "unchanged" rather than silently skipped, so the admin sees that
+	 * nothing happened and why.
+	 */
+	private static function maybe_stash_invoice_offer( int $family_id, object $package ): void {
+		$current_period  = current_datetime()->format( 'Y-m' );
+		$current_invoice = TR_Invoices::get_for_period( $family_id, $current_period );
+
+		if ( null === $current_invoice ) {
+			return;
+		}
+
+		if ( in_array( $current_invoice->status, [ 'pending', 'overdue' ], true ) ) {
+			set_transient( self::invoice_offer_key(), [
+				'invoice_id' => (int) $current_invoice->id,
+				'old_amount' => (float) $current_invoice->amount,
+				'new_amount' => (float) $package->default_monthly_fee,
+			], MINUTE_IN_SECONDS );
+			return;
+		}
+
+		set_transient( self::invoice_offer_key(), [ 'unchanged' => true ], MINUTE_IN_SECONDS );
+	}
+
+	/**
+	 * Handles the "Update invoice to new amount" link offered on the family
+	 * edit screen after a package change (v0.9.3). Re-checks the invoice is
+	 * still pending/overdue at the time this fires, in case it was paid in
+	 * the meantime — never re-prices a paid invoice.
+	 */
+	public static function maybe_handle_invoice_update_action(): void {
+		if ( ! isset( $_GET['tr_update_invoice'], $_GET['page'], $_GET['id'] ) || TR_Admin_Menu::PAGE_FAMILIES !== $_GET['page'] ) {
+			return;
+		}
+
+		$invoice_id = absint( $_GET['tr_update_invoice'] );
+		$family_id  = absint( $_GET['id'] );
+		if ( $invoice_id <= 0 ) {
+			return;
+		}
+
+		check_admin_referer( 'tr_update_invoice_' . $invoice_id );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You do not have permission to do that.', 'tangnest-robotics' ) );
+		}
+
+		$invoice = TR_Invoices::get( $invoice_id );
+		$family  = TR_Families::get( $family_id );
+
+		if ( null === $invoice || null === $family || ! in_array( $invoice->status, [ 'pending', 'overdue' ], true ) ) {
+			wp_safe_redirect( self::edit_url( $family_id ) );
+			exit;
+		}
+
+		$old_amount = (float) $invoice->amount;
+		$new_amount = (float) $family->monthly_amount;
+
+		TR_Invoices::update_amount_and_reset_irembopay( $invoice_id, $new_amount );
+
+		TR_Logger::info( 'Invoice amount updated after package change', [
+			'invoice_id' => $invoice_id,
+			'family_id'  => $family_id,
+			'old_amount' => $old_amount,
+			'new_amount' => $new_amount,
+			'changed_by' => wp_get_current_user()->user_login,
+		] );
+
+		wp_safe_redirect( add_query_arg( [
+			'page'      => TR_Admin_Menu::PAGE_FAMILIES,
+			'action'    => 'edit',
+			'id'        => $family_id,
+			'tr_notice' => 'invoice_updated',
 		], admin_url( 'admin.php' ) ) );
 		exit;
 	}
@@ -340,6 +432,11 @@ class TR_Family_Edit {
 		$errors = $state['errors'] ?? [];
 		$posted = $state['values'] ?? [];
 
+		$invoice_offer = get_transient( self::invoice_offer_key() );
+		if ( $invoice_offer ) {
+			delete_transient( self::invoice_offer_key() );
+		}
+
 		$parent_user = $family ? get_userdata( (int) $family->parent_user_id ) : null;
 		$phone       = $posted['phone'] ?? ( $parent_user ? get_user_meta( $parent_user->ID, 'phone_number', true ) : '' );
 		$parent_mode = $posted['parent_mode'] ?? 'existing';
@@ -361,6 +458,31 @@ class TR_Family_Edit {
 		// it selected, not silently fall back to "— Select —".
 		$selected_package_id = isset( $posted['package_id'] ) ? absint( $posted['package_id'] ) : (int) ( $family->package_id ?? 0 );
 		$selected_package    = $selected_package_id > 0 ? TR_Programs::get( $selected_package_id ) : null;
+
+		// v0.9.3: a child deactivated/reactivated on this family's own
+		// screen can leave its package sized for the wrong number of
+		// children — warn, and pre-select (but never silently apply) a
+		// same-course package sized for the current active count. Skipped
+		// on a validation-error redisplay ($posted set) so the admin's own
+		// in-progress selection is never overridden by this.
+		$mismatch                 = false;
+		$active_child_count       = 0;
+		$suggested_package        = null;
+		$mismatched_package_name  = '';
+		$mismatched_child_count   = 0;
+		if ( $family && empty( $posted ) && $selected_package && ! empty( $selected_package->child_count ) ) {
+			$active_child_count = TR_Students::count( [ 'family_id' => (int) $family->id, 'status' => 'active' ] );
+			if ( $active_child_count !== (int) $selected_package->child_count ) {
+				$mismatch                = true;
+				$mismatched_package_name = $selected_package->name;
+				$mismatched_child_count  = (int) $selected_package->child_count;
+				$suggested_package       = TR_Programs::find_matching_package( $selected_package, $active_child_count );
+				if ( $suggested_package ) {
+					$selected_package_id = (int) $suggested_package->id;
+					$selected_package    = $suggested_package;
+				}
+			}
+		}
 
 		$dropdown_packages = $active_packages;
 		if ( $selected_package && 'active' !== $selected_package->status ) {
@@ -385,9 +507,56 @@ class TR_Family_Edit {
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Family saved.', 'tangnest-robotics' ); ?></p></div>
 			<?php endif; ?>
 
+			<?php if ( $invoice_offer && empty( $invoice_offer['unchanged'] ) ) : ?>
+				<div class="notice notice-warning">
+					<p>
+						<?php
+						printf(
+							/* translators: 1: current amount, 2: new amount */
+							esc_html__( 'The package changed. This month\'s invoice is currently %1$s RWF — update it to %2$s RWF?', 'tangnest-robotics' ),
+							esc_html( number_format( $invoice_offer['old_amount'], 2 ) ),
+							esc_html( number_format( $invoice_offer['new_amount'], 2 ) )
+						);
+						?>
+						<a href="<?php echo esc_url( wp_nonce_url(
+							add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'action' => 'edit', 'id' => $family_id, 'tr_update_invoice' => $invoice_offer['invoice_id'] ], admin_url( 'admin.php' ) ),
+							'tr_update_invoice_' . $invoice_offer['invoice_id']
+						) ); ?>"><?php esc_html_e( 'Update invoice to new amount', 'tangnest-robotics' ); ?></a>
+					</p>
+				</div>
+			<?php elseif ( $invoice_offer && ! empty( $invoice_offer['unchanged'] ) ) : ?>
+				<div class="notice notice-info"><p><?php esc_html_e( 'The paid invoice for this month is unchanged.', 'tangnest-robotics' ); ?></p></div>
+			<?php endif; ?>
+
 			<?php if ( ! empty( $errors ) ) : ?>
 				<div class="notice notice-error">
 					<ul><?php foreach ( $errors as $error ) : ?><li><?php echo esc_html( $error ); ?></li><?php endforeach; ?></ul>
+				</div>
+			<?php endif; ?>
+
+			<?php if ( $mismatch ) : ?>
+				<div class="notice notice-warning">
+					<p>
+						<?php
+						printf(
+							/* translators: 1: number of active children, 2: package's child count */
+							esc_html__( 'This family has %1$d active child(ren) but is on a package for %2$d. Their monthly amount may be wrong.', 'tangnest-robotics' ),
+							$active_child_count,
+							$mismatched_child_count
+						);
+						?>
+						<?php if ( $suggested_package ) : ?>
+							<?php
+							printf(
+								/* translators: %s: suggested package name */
+								esc_html__( 'Pre-selected a matching package below: "%s" — review and save to apply.', 'tangnest-robotics' ),
+								esc_html( $suggested_package->name )
+							);
+							?>
+						<?php else : ?>
+							<?php esc_html_e( 'No matching package was found for this course at this child count — please pick one manually.', 'tangnest-robotics' ); ?>
+						<?php endif; ?>
+					</p>
 				</div>
 			<?php endif; ?>
 
@@ -680,16 +849,29 @@ class TR_Family_Edit {
 				<tr>
 					<th><?php esc_html_e( 'Name', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Status', 'tangnest-robotics' ); ?></th>
+					<th><?php esc_html_e( 'Actions', 'tangnest-robotics' ); ?></th>
 				</tr>
 			</thead>
 			<tbody>
 				<?php if ( empty( $students ) ) : ?>
-					<tr><td colspan="2"><?php esc_html_e( 'No students yet.', 'tangnest-robotics' ); ?></td></tr>
+					<tr><td colspan="3"><?php esc_html_e( 'No students yet.', 'tangnest-robotics' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $students as $student ) : ?>
+						<?php
+						$action  = 'active' === $student->status ? 'deactivate' : 'reactivate';
+						$label   = 'active' === $student->status ? __( 'Deactivate', 'tangnest-robotics' ) : __( 'Reactivate', 'tangnest-robotics' );
+						$confirm = 'active' === $student->status ? __( 'Deactivate this student?', 'tangnest-robotics' ) : __( 'Reactivate this student?', 'tangnest-robotics' );
+						$url     = wp_nonce_url(
+							add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_FAMILIES, 'tr_row_action' => $action, 'id' => $student->id ], admin_url( 'admin.php' ) ),
+							'tr_student_row_action_' . $student->id
+						);
+						?>
 						<tr>
 							<td><?php echo esc_html( trim( $student->first_name . ' ' . $student->last_name ) ); ?></td>
 							<td><?php echo esc_html( ucfirst( $student->status ) ); ?></td>
+							<td>
+								<a href="<?php echo esc_url( $url ); ?>" onclick="return confirm('<?php echo esc_js( $confirm ); ?>');"><?php echo esc_html( $label ); ?></a>
+							</td>
 						</tr>
 					<?php endforeach; ?>
 				<?php endif; ?>

@@ -26,6 +26,7 @@ class TR_Admin_Menu {
 		add_action( 'admin_notices', [ $this, 'render_action_notices' ] );
 
 		add_action( 'admin_init', [ 'TR_Family_Edit', 'maybe_handle_submit' ] );
+		add_action( 'admin_init', [ 'TR_Family_Edit', 'maybe_handle_invoice_update_action' ] );
 		add_action( 'admin_init', [ 'TR_Student_Edit', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Packages_Page', 'maybe_handle_submit' ] );
 		add_action( 'admin_init', [ 'TR_Packages_Page', 'maybe_handle_row_actions' ] );
@@ -466,6 +467,8 @@ class TR_Admin_Menu {
 			'family_deleted'          => [ 'success', __( 'Family permanently deleted.', 'tangnest-robotics' ) ],
 			'family_delete_failed'    => [ 'error', __( 'That family could not be found.', 'tangnest-robotics' ) ],
 			'family_delete_has_paid_invoices' => [ 'error', __( 'That family could not be deleted — it has a paid invoice, which is the financial record and must never be removed.', 'tangnest-robotics' ) ],
+			'student_status_changed'  => [ 'success', __( 'Student status updated.', 'tangnest-robotics' ) ],
+			'invoice_updated'         => [ 'success', __( 'Invoice updated to the new amount.', 'tangnest-robotics' ) ],
 		];
 
 		if ( 'invoices_bulk_deleted' === $notice ) {
@@ -607,23 +610,31 @@ class TR_Admin_Menu {
 	}
 
 	/**
-	 * Handles the Withdraw / Reactivate row-action links from the Students
-	 * table. Nonce + capability are re-verified here even though the link
-	 * is only ever rendered for users who already have the capability.
+	 * Handles the Deactivate / Reactivate row-action links from the
+	 * Students table AND the Family edit screen's children sublist (v0.9.3
+	 * — the toggle is reachable from both, since the need to deactivate a
+	 * child most often arises while already looking at their family). The
+	 * target student's own family_id (not a URL param) decides where to
+	 * redirect back to, since "id" already means "family" on the Families
+	 * page — the row-action link itself only ever carries the student id.
+	 * Nonce + capability are re-verified here even though the link is only
+	 * ever rendered for users who already have the capability.
 	 */
 	public function maybe_handle_row_actions(): void {
 		if ( ! isset( $_GET['tr_row_action'], $_GET['id'], $_GET['page'] ) ) {
 			return;
 		}
 
-		if ( self::PAGE_STUDENTS !== $_GET['page'] ) {
+		if ( ! in_array( $_GET['page'], [ self::PAGE_STUDENTS, self::PAGE_FAMILIES ], true ) ) {
 			return;
 		}
+
+		$from_family = self::PAGE_FAMILIES === $_GET['page'];
 
 		$row_action = sanitize_key( wp_unslash( $_GET['tr_row_action'] ) );
 		$student_id = absint( $_GET['id'] );
 
-		if ( ! in_array( $row_action, [ 'withdraw', 'reactivate' ], true ) || $student_id <= 0 ) {
+		if ( ! in_array( $row_action, [ 'deactivate', 'reactivate' ], true ) || $student_id <= 0 ) {
 			return;
 		}
 
@@ -639,7 +650,8 @@ class TR_Admin_Menu {
 			exit;
 		}
 
-		$new_status = 'withdraw' === $row_action ? 'withdrawn' : 'active';
+		$old_status = $student->status;
+		$new_status = 'deactivate' === $row_action ? 'withdrawn' : 'active';
 
 		TR_Students::update( $student_id, [
 			'first_name'    => $student->first_name,
@@ -654,7 +666,28 @@ class TR_Admin_Menu {
 		// touches one, since progress and billing both live on the family.
 		TR_Families::flag_composition_change( (int) $student->family_id );
 
-		wp_safe_redirect( admin_url( 'admin.php?page=' . self::PAGE_STUDENTS ) );
+		TR_Logger::info( 'Student status changed', [
+			'student_id' => $student_id,
+			'family_id'  => (int) $student->family_id,
+			'old_status' => $old_status,
+			'new_status' => $new_status,
+			'changed_by' => wp_get_current_user()->user_login,
+		] );
+
+		if ( $from_family ) {
+			wp_safe_redirect( add_query_arg( [
+				'page'      => self::PAGE_FAMILIES,
+				'action'    => 'edit',
+				'id'        => (int) $student->family_id,
+				'tr_notice' => 'student_status_changed',
+			], admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		wp_safe_redirect( add_query_arg( [
+			'page'      => self::PAGE_STUDENTS,
+			'tr_notice' => 'student_status_changed',
+		], admin_url( 'admin.php' ) ) );
 		exit;
 	}
 

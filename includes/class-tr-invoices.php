@@ -355,6 +355,27 @@ class TR_Invoices {
 		$wpdb->query( $sql );
 	}
 
+	/**
+	 * Used after a family's package changes mid-period and the admin
+	 * explicitly confirms updating that month's still-unpaid invoice
+	 * (v0.9.3): writes the new amount and clears the three IremboPay
+	 * reference fields so TR_Payment::is_reusable() returns false on the
+	 * next Pay attempt, forcing TR_Payment::create_new() to resolve the new
+	 * package's product code fresh (there is no product_code column on
+	 * this table — it is always resolved live from the family's
+	 * package_id) rather than reuse a stale invoice priced for the old one.
+	 */
+	public static function update_amount_and_reset_irembopay( int $id, float $new_amount ): bool {
+		global $wpdb;
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET amount = %s, irembopay_invoice_number = NULL, irembopay_transaction_id = NULL, irembopay_expires_at = NULL, updated_at = %s WHERE id = %d",
+			[ number_format( $new_amount, 2, '.', '' ), current_time( 'mysql' ), $id ]
+		);
+
+		return false !== $wpdb->query( $sql );
+	}
+
 	private static function stages_sent( ?string $csv ): array {
 		if ( empty( $csv ) ) {
 			return [];

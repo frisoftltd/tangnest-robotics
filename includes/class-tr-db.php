@@ -65,6 +65,13 @@ class TR_DB {
 			self::migrate_zero_program_dates_to_null();
 		}
 
+		// A brand new install has no package-name data to migrate — course/
+		// child_count are only ever backfilled on a site upgrading from
+		// before this column existed.
+		if ( $previous_version && version_compare( $previous_version, '0.9.3', '<' ) ) {
+			self::migrate_backfill_course_and_child_count();
+		}
+
 		update_option( self::DB_VERSION_OPTION, TANGNEST_ROBOTICS_DB_VERSION );
 	}
 
@@ -191,6 +198,52 @@ class TR_DB {
 	}
 
 	/**
+	 * v0.9.3 adds course/child_count so a family's package can be matched
+	 * automatically when its active child count changes. Every package
+	 * created before this ran only has a free-text name like "Applied
+	 * Robotics & Coding – 2 siblings" — this parses what it can out of that
+	 * name and leaves the rest NULL for an admin to fill in by hand (see
+	 * `wp tangnest status`). Runs once, as part of the version-gated
+	 * upgrade above.
+	 */
+	private static function migrate_backfill_course_and_child_count(): void {
+		global $wpdb;
+		$programs_table = self::table_programs();
+
+		$rows = $wpdb->get_results( "SELECT id, name, course, child_count FROM {$programs_table} WHERE course IS NULL OR course = '' OR child_count IS NULL" );
+
+		$matched      = 0;
+		$needs_review = [];
+
+		foreach ( $rows as $row ) {
+			$parsed = TR_Programs::parse_name_into_course_and_child_count( $row->name );
+
+			$course      = ( null !== $row->course && '' !== $row->course ) ? $row->course : $parsed['course'];
+			$child_count = null !== $row->child_count ? (int) $row->child_count : $parsed['child_count'];
+
+			if ( null === $course || null === $child_count ) {
+				$needs_review[] = (int) $row->id;
+				continue;
+			}
+
+			$wpdb->update(
+				$programs_table,
+				[ 'course' => $course, 'child_count' => $child_count ],
+				[ 'id' => $row->id ],
+				[ '%s', '%d' ],
+				[ '%d' ]
+			);
+			$matched++;
+		}
+
+		TR_Logger::info( 'v0.9.3 migration: course/child_count backfill', [
+			'matched'          => $matched,
+			'needs_review'     => count( $needs_review ),
+			'needs_review_ids' => $needs_review,
+		] );
+	}
+
+	/**
 	 * v0.6.0 makes monthly_amount a calculated figure by default. Every
 	 * family that existed before this ran had its amount hand-typed under
 	 * the old model — those figures must not be silently overwritten by a
@@ -300,6 +353,8 @@ class TR_DB {
 			duration_months        TINYINT(3)   UNSIGNED NOT NULL DEFAULT 8,
 			default_monthly_fee    DECIMAL(12,2) NOT NULL DEFAULT '0.00',
 			irembopay_product_code VARCHAR(60)  DEFAULT NULL,
+			course                 VARCHAR(150) DEFAULT NULL,
+			child_count            TINYINT(3)   UNSIGNED DEFAULT NULL,
 			start_date             DATE         DEFAULT NULL,
 			notes                  TEXT         DEFAULT NULL,
 			status                 VARCHAR(20)  NOT NULL DEFAULT 'active',
