@@ -329,15 +329,25 @@ class TR_Notifications {
 	/**
 	 * TR_Payment::payment_page_url() builds the bare ?tr_pay=... URL used
 	 * in-session from the dashboard, where no token is needed. A message
-	 * carries no session, so its Pay now link must also carry tr_access
-	 * alongside tr_pay — TR_Parent_Dashboard::maybe_handle_access_token()
-	 * signs the parent in from that token and preserves tr_pay across its
-	 * redirect, landing them straight on the payment flow in one tap.
+	 * carries no session, so its Pay now link must also carry the access
+	 * token — TR_Parent_Dashboard::maybe_handle_access_token() signs the
+	 * parent in from that token and preserves tr_pay across its redirect,
+	 * landing them straight on the payment flow in one tap.
+	 *
+	 * v0.10.4: built from TR_Parent_Dashboard::build_access_url() (the
+	 * short /p/<token> form, or the long ?tr_access= fallback on a
+	 * plain-permalink site) with ?tr_pay=... appended on top — tr_pay
+	 * always arrives as an ordinary query-string parameter regardless of
+	 * which form the token itself takes, since a rewrite rule only ever
+	 * matches the path portion of the URL.
 	 */
 	private static function pay_url_with_token( int $invoice_id, string $token ): string {
-		$base = TR_Payment::payment_page_url( $invoice_id );
+		$base = TR_Parent_Dashboard::build_access_url( $token );
+		if ( '' === $base ) {
+			return '';
+		}
 
-		return '' !== $base ? add_query_arg( 'tr_access', $token, $base ) : '';
+		return add_query_arg( 'tr_pay', $invoice_id, $base );
 	}
 
 	/**

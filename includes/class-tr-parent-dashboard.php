@@ -3,10 +3,17 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
  * Renders [tangnest_parent_dashboard], owns the dashboard-page option, and
- * handles device-bound passwordless access links (?tr_access=...). Access
- * control lives in templates/parent-dashboard.php and resolves the family
- * strictly from the logged-in user's session — never from a request
- * parameter — so one parent can never view another family by editing a URL.
+ * handles device-bound passwordless access links. Access control lives in
+ * templates/parent-dashboard.php and resolves the family strictly from the
+ * logged-in user's session — never from a request parameter — so one
+ * parent can never view another family by editing a URL.
+ *
+ * v0.10.4 shortens the link itself: /p/<22-char-token> instead of
+ * ?tr_access=<64-char-hex-token> on the full dashboard URL (125 characters
+ * down to roughly 48). The old ?tr_access= form still works — see
+ * build_access_url()'s plain-permalink fallback and
+ * maybe_handle_access_token()'s dual $_GET/query-var read — since links
+ * already sitting in a parent's inbox must keep working indefinitely.
  */
 class TR_Parent_Dashboard {
 	const OPTION_PAGE_ID = 'tangnest_robotics_dashboard_page_id';
@@ -16,6 +23,10 @@ class TR_Parent_Dashboard {
 	const DEAD_TOKEN_FLAG_PREFIX  = 'tr_access_dead_';
 	const CLEANUP_THROTTLE_KEY    = 'tr_access_cleanup_ran';
 
+	const SHORT_LINK_BASE_OPTION    = 'tangnest_robotics_short_link_base';
+	const REWRITE_VERSION_OPTION    = 'tangnest_robotics_rewrite_version';
+	const SHORT_TOKEN_PATTERN       = '[A-Za-z0-9_-]{22}';
+
 	public function __construct() {
 		add_shortcode( self::SHORTCODE, [ $this, 'render_shortcode' ] );
 		add_action( 'wp_enqueue_scripts', [ $this, 'maybe_enqueue_assets' ] );
@@ -23,6 +34,9 @@ class TR_Parent_Dashboard {
 		add_action( 'template_redirect', [ $this, 'maybe_handle_access_token' ] );
 		add_action( 'after_password_reset', [ $this, 'maybe_auto_login_after_reset' ], 10, 2 );
 		add_action( 'login_init', [ $this, 'maybe_handle_reset_link_fallback' ] );
+
+		add_filter( 'query_vars', [ $this, 'add_query_vars' ] );
+		add_action( 'init', [ $this, 'register_short_link_rewrite' ] );
 	}
 
 	public static function get_url(): string {
@@ -34,6 +48,135 @@ class TR_Parent_Dashboard {
 		$permalink = get_permalink( $page_id );
 
 		return $permalink ?: '';
+	}
+
+	public function add_query_vars( array $vars ): array {
+		$vars[] = 'tr_access';
+		return $vars;
+	}
+
+	/**
+	 * The one place a raw access/message token is actually generated
+	 * (v0.10.4) — 16 bytes of CSPRNG output, base64url-encoded, giving a
+	 * fixed 22-character, URL-safe string with 128 bits of entropy. Never
+	 * fewer than 16 bytes: this is a bearer credential, not a display ID.
+	 * TR_Access_Tokens::generate() and TR_Message_Tokens::generate() both
+	 * call this rather than each rolling their own, so the two can never
+	 * quietly drift onto different byte counts or encodings.
+	 */
+	public static function generate_raw_token(): string {
+		return rtrim( strtr( base64_encode( random_bytes( 16 ) ), '+/', '-_' ), '=' );
+	}
+
+	/**
+	 * Registers `/<base>/<22-char-token>` → the dashboard page with
+	 * tr_access set, where <base> is "p" unless something else already
+	 * claims that (see short_link_base()). Flushes rewrite rules once per
+	 * plugin-version transition, same mechanism TR_DB::maybe_upgrade() uses
+	 * for schema changes — a file-copy deploy never fires the activation
+	 * hook, so a version check on every load is what actually catches it.
+	 * Flushing is deliberately NOT unconditional: it writes .htaccess and
+	 * rebuilds the full rewrite_rules option, which is too expensive to do
+	 * on every page load.
+	 */
+	public static function register_short_link_rewrite(): void {
+		$page_id = (int) get_option( self::OPTION_PAGE_ID, 0 );
+		$slug    = $page_id > 0 ? get_post_field( 'post_name', $page_id ) : '';
+
+		if ( '' === $slug ) {
+			// No dashboard page configured yet — nothing to route to. The
+			// version option is deliberately left untouched so the rule
+			// gets registered (and rules flushed) the moment a page IS
+			// configured, instead of being permanently skipped because
+			// this ran once before that happened.
+			return;
+		}
+
+		add_rewrite_rule(
+			'^' . self::short_link_base() . '/(' . self::SHORT_TOKEN_PATTERN . ')/?$',
+			'index.php?pagename=' . $slug . '&tr_access=$matches[1]',
+			'top'
+		);
+
+		self::maybe_flush_rewrite_rules();
+	}
+
+	/**
+	 * Decided exactly once, the first time this plugin ever registers its
+	 * short-link rewrite rule, by inspecting the rewrite_rules option as it
+	 * stands at that moment — i.e. before our own rule has ever been
+	 * flushed into it, so what's already there genuinely reflects another
+	 * plugin or the theme, never a leftover copy of our own rule from a
+	 * previous flush. The result is cached in its own option permanently,
+	 * so a later request can't "rediscover" a conflict that's actually
+	 * just our own rule from last time.
+	 */
+	public static function short_link_base(): string {
+		$base = get_option( self::SHORT_LINK_BASE_OPTION, '' );
+		if ( '' !== $base ) {
+			return $base;
+		}
+
+		$conflict = false;
+		$existing = get_option( 'rewrite_rules' );
+		if ( is_array( $existing ) ) {
+			foreach ( $existing as $pattern => $query ) {
+				if ( 1 === preg_match( '#^\^?p/#', $pattern ) ) {
+					$conflict = true;
+					break;
+				}
+			}
+		}
+
+		$base = $conflict ? 'go' : 'p';
+		update_option( self::SHORT_LINK_BASE_OPTION, $base, true );
+
+		if ( $conflict ) {
+			TR_Logger::warning( 'Short access-link base "/p/" conflicts with an existing rewrite rule — using "/go/" instead.' );
+		} else {
+			TR_Logger::info( 'Short access-link base set to "/p/" — no conflicting rewrite rule found.' );
+		}
+
+		return $base;
+	}
+
+	/**
+	 * Public + static so the activation hook (which never instantiates
+	 * this class — see tangnest-robotics.php) can call it directly, as
+	 * well as the instance-level init hook above. Both paths funnel
+	 * through the exact same version check, so there is only one place
+	 * that decides "has this transition already been flushed".
+	 */
+	public static function maybe_flush_rewrite_rules(): void {
+		if ( get_option( self::REWRITE_VERSION_OPTION ) === TANGNEST_ROBOTICS_VERSION ) {
+			return;
+		}
+
+		flush_rewrite_rules( false );
+		update_option( self::REWRITE_VERSION_OPTION, TANGNEST_ROBOTICS_VERSION, false );
+	}
+
+	/**
+	 * The single place every access/message link is built (v0.10.4) —
+	 * TR_Access_Tokens::build_url(), TR_Message_Tokens::build_url() and
+	 * the Pay-now-with-token link all delegate here, so there is exactly
+	 * one chokepoint to get right rather than N copies that could drift.
+	 * Falls back to the long ?tr_access= form when this site has no
+	 * pretty-permalink structure at all — a plain-permalink site never
+	 * writes mod_rewrite rules to .htaccess regardless of what this plugin
+	 * registers, so the short path could never actually be reached there.
+	 */
+	public static function build_access_url( string $token ): string {
+		$dashboard_url = self::get_url();
+		if ( '' === $dashboard_url ) {
+			return '';
+		}
+
+		if ( '' === get_option( 'permalink_structure' ) ) {
+			return add_query_arg( 'tr_access', $token, $dashboard_url );
+		}
+
+		return home_url( '/' . self::short_link_base() . '/' . $token );
 	}
 
 	public function maybe_enqueue_assets(): void {
@@ -129,6 +272,25 @@ class TR_Parent_Dashboard {
 	const PREVIEWER_USER_AGENTS = [ 'WhatsApp/', 'facebookexternalhit', 'Twitterbot', 'Slackbot', 'TelegramBot' ];
 
 	/**
+	 * The token, from whichever source actually carries it (v0.10.4). A
+	 * `/<base>/<token>` request never puts it in $_GET — a matched
+	 * rewrite query var only ever reaches get_query_var(), never the
+	 * superglobal — while the legacy/plain-permalink `?tr_access=` form
+	 * only ever reaches $_GET. Checking both is what lets either link
+	 * format keep working regardless of which one a given site's
+	 * permalink structure can actually route.
+	 */
+	private static function read_tr_access_param(): string {
+		if ( isset( $_GET['tr_access'] ) && is_string( $_GET['tr_access'] ) ) {
+			return sanitize_text_field( wp_unslash( $_GET['tr_access'] ) );
+		}
+
+		$query_var = get_query_var( 'tr_access', '' );
+
+		return is_string( $query_var ) ? sanitize_text_field( $query_var ) : '';
+	}
+
+	/**
 	 * Validates ?tr_access={token} before the shortcode renders and always
 	 * redirects to the bare dashboard URL afterward — success or failure —
 	 * so the token never lingers in the browser history or referrer
@@ -140,11 +302,13 @@ class TR_Parent_Dashboard {
 	 * which shows the login form since a bot is never logged in.
 	 */
 	public function maybe_handle_access_token(): void {
+		$raw_token = self::read_tr_access_param();
+
 		// This hooks into template_redirect, which fires on every front-end
 		// request site-wide — a visit with no token in the URL is not an
 		// event worth a log line, or this would write thousands of them a
 		// day once parents are actually using the dashboard.
-		if ( ! isset( $_GET['tr_access'] ) ) {
+		if ( '' === $raw_token ) {
 			return;
 		}
 
@@ -159,7 +323,7 @@ class TR_Parent_Dashboard {
 			return;
 		}
 
-		$token = is_string( $_GET['tr_access'] ) ? sanitize_text_field( wp_unslash( $_GET['tr_access'] ) ) : '';
+		$token = $raw_token;
 
 		// Shared family phones are common — a token link must sign in as
 		// the family it belongs to, not whoever happened to be logged in.

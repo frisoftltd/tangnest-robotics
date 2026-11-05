@@ -21,6 +21,7 @@ class TR_Admin_Menu {
 		add_filter( 'admin_body_class', [ $this, 'filter_admin_body_class' ] );
 		add_action( 'admin_notices', [ $this, 'render_composition_notices' ] );
 		add_action( 'admin_notices', [ $this, 'render_dashboard_page_notice' ] );
+		add_action( 'admin_notices', [ $this, 'render_short_link_base_notice' ] );
 		add_action( 'admin_notices', [ $this, 'render_webhook_secret_mismatch_notice' ] );
 		add_action( 'admin_notices', [ $this, 'render_families_without_package_notice' ] );
 		add_action( 'admin_notices', [ $this, 'render_action_notices' ] );
@@ -610,6 +611,35 @@ class TR_Admin_Menu {
 					'<a href="' . esc_url( admin_url( 'admin.php?page=' . self::PAGE_SETTINGS ) ) . '">' . esc_html__( 'Robotics → Settings', 'tangnest-robotics' ) . '</a>'
 				);
 				?>
+			</p>
+		</div>
+		<?php
+	}
+
+	/**
+	 * v0.10.4: "/p/" is short and could collide with another plugin's or
+	 * the theme's own rewrite rules — TR_Parent_Dashboard::short_link_base()
+	 * checks for that once and falls back to "/go/" if so. One-time
+	 * informational notice, not a warning the admin needs to act on —
+	 * short links work fine either way, this just reports which base won.
+	 */
+	public function render_short_link_base_notice(): void {
+		if ( ! current_user_can( self::CAP ) ) {
+			return;
+		}
+
+		$screen = get_current_screen();
+		if ( null === $screen || false === strpos( $screen->id, 'tangnest-robotics' ) ) {
+			return;
+		}
+
+		if ( 'go' !== TR_Parent_Dashboard::short_link_base() ) {
+			return;
+		}
+		?>
+		<div class="notice notice-info is-dismissible">
+			<p>
+				<?php esc_html_e( 'Short access links use "/go/" instead of "/p/" — another rewrite rule on this site already claims "/p/".', 'tangnest-robotics' ); ?>
 			</p>
 		</div>
 		<?php

@@ -3,7 +3,7 @@
  * Plugin Name:       Tangnest Robotics — Class & Payment Manager
  * Plugin URI:        https://github.com/frisoftltd/tangnest-robotics
  * Description:       Manages robotics class enrollment, family billing, and IremboPay payments for Tangnest. Standalone — does not require WooCommerce or Tutor LMS.
- * Version:           0.10.3
+ * Version:           0.10.4
  * Author:            Fri Soft Ltd
  * Author URI:        https://frisoft.rw
  * License:           GPL-2.0-or-later
@@ -15,7 +15,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-define( 'TANGNEST_ROBOTICS_VERSION',     '0.10.3' );
+define( 'TANGNEST_ROBOTICS_VERSION',     '0.10.4' );
 define( 'TANGNEST_ROBOTICS_DB_VERSION',  '0.10.0' );
 define( 'TANGNEST_ROBOTICS_PLUGIN_FILE', __FILE__ );
 define( 'TANGNEST_ROBOTICS_PLUGIN_DIR',  plugin_dir_path( __FILE__ ) );
@@ -175,6 +175,15 @@ register_activation_hook( TANGNEST_ROBOTICS_PLUGIN_FILE, function() {
 
 	require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-cron.php';
 	TR_Cron::maybe_schedule();
+
+	// Belt-and-suspenders (v0.10.4): the 'init' hook registered by the
+	// already-bootstrapped TR_Parent_Dashboard instance normally handles
+	// this on the very same request, but activation can also run in
+	// contexts (WP-CLI, multisite network activation) where that timing
+	// isn't guaranteed — this makes the short-link rewrite rule exist
+	// and be flushed immediately regardless.
+	require_once TANGNEST_ROBOTICS_PLUGIN_DIR . 'includes/class-tr-parent-dashboard.php';
+	TR_Parent_Dashboard::register_short_link_rewrite();
 } );
 
 register_deactivation_hook( TANGNEST_ROBOTICS_PLUGIN_FILE, function() {

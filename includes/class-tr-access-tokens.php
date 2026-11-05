@@ -57,7 +57,7 @@ class TR_Access_Tokens {
 	 * mints a fresh token rather than fail; see its docblock.
 	 */
 	public static function generate( int $family_id ): string {
-		$token = bin2hex( random_bytes( 32 ) );
+		$token = TR_Parent_Dashboard::generate_raw_token();
 		$hash  = hash( 'sha256', $token );
 
 		$now     = current_time( 'mysql' );
@@ -70,12 +70,7 @@ class TR_Access_Tokens {
 	}
 
 	public static function build_url( string $token ): string {
-		$dashboard_url = TR_Parent_Dashboard::get_url();
-		if ( '' === $dashboard_url ) {
-			return '';
-		}
-
-		return add_query_arg( 'tr_access', $token, $dashboard_url );
+		return TR_Parent_Dashboard::build_access_url( $token );
 	}
 
 	/**
@@ -195,10 +190,24 @@ class TR_Access_Tokens {
 			return 0;
 		}
 
-		$format_ok = (bool) preg_match( '/^[a-f0-9]{64}$/', $token );
-		TR_Logger::debug( 'Access-link format check', [ 'format_ok' => $format_ok ] );
+		// v0.10.4: new links are 22-character base64url; links already
+		// sitting in a parent's inbox or WhatsApp history are still the
+		// original 64-character hex form and must keep working
+		// indefinitely — accept either before hashing. Logged at debug
+		// level only so the legacy branch's actual usage (and the day it
+		// drops to zero) is visible without raising a warning on every
+		// perfectly valid old link.
+		if ( preg_match( '/^[A-Za-z0-9_-]{22}$/', $token ) ) {
+			$format = 'short';
+		} elseif ( preg_match( '/^[a-f0-9]{64}$/', $token ) ) {
+			$format = 'legacy';
+		} else {
+			$format = null;
+		}
 
-		if ( ! $format_ok ) {
+		TR_Logger::debug( 'Access-link format check', [ 'format' => $format ?? 'invalid' ] );
+
+		if ( null === $format ) {
 			TR_Logger::warning( 'Access-link rejected', [ 'reason' => 'bad_format' ] );
 			return 0;
 		}

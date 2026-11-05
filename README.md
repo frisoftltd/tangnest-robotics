@@ -249,6 +249,10 @@ No changes made. Re-run with --execute to apply.
 
 ## Changelog
 
+### v0.10.4
+- Changed: Access links are now 48 characters instead of 125 — short /p/ path and a 22-character token
+- Links already sent keep working; both token formats are accepted
+
 ### v0.10.3
 - New: A "How many children?" selector (1–6) on the family add/edit screen's Add child section — changing it adds or removes blank rows to match, and the live price line updates immediately from the count, before any name is typed. Starts at the family's current active child count; removing a row and the selector stay in sync in both directions.
 

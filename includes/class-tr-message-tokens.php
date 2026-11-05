@@ -53,7 +53,7 @@ class TR_Message_Tokens {
 	 * reuse-aware version every automatic send should actually call.
 	 */
 	public static function generate( int $family_id ): string {
-		$token = bin2hex( random_bytes( 32 ) );
+		$token = TR_Parent_Dashboard::generate_raw_token();
 		$hash  = hash( 'sha256', $token );
 
 		$now     = current_time( 'mysql' );
@@ -66,12 +66,7 @@ class TR_Message_Tokens {
 	}
 
 	public static function build_url( string $token ): string {
-		$dashboard_url = TR_Parent_Dashboard::get_url();
-		if ( '' === $dashboard_url ) {
-			return '';
-		}
-
-		return add_query_arg( 'tr_access', $token, $dashboard_url );
+		return TR_Parent_Dashboard::build_access_url( $token );
 	}
 
 	/**
