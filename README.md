@@ -249,6 +249,9 @@ No changes made. Re-run with --execute to apply.
 
 ## Changelog
 
+### v0.10.5
+- Changed: Phone numbers are now entered in full international format with a country code, not Rwanda-only
+
 ### v0.10.4
 - Changed: Access links are now 48 characters instead of 125 — short /p/ path and a 22-character token
 - Links already sent keep working; both token formats are accepted

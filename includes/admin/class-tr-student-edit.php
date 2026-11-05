@@ -36,7 +36,10 @@ class TR_Student_Edit {
 			$new_email = isset( $_POST['new_email'] ) ? sanitize_email( wp_unslash( $_POST['new_email'] ) ) : '';
 			$new_first = isset( $_POST['new_first_name'] ) ? sanitize_text_field( wp_unslash( $_POST['new_first_name'] ) ) : '';
 			$new_last  = isset( $_POST['new_last_name'] ) ? sanitize_text_field( wp_unslash( $_POST['new_last_name'] ) ) : '';
+			// v0.10.5: international, not Rwanda-only — see TR_Family_Edit
+			// for the identical cleaning + E.164 check.
 			$new_phone = isset( $_POST['new_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['new_phone'] ) ) : '';
+			$new_phone = preg_replace( '/[\s\-().]/', '', $new_phone );
 
 			if ( ! is_email( $new_email ) ) {
 				$errors[] = __( 'Please enter a valid email for the new parent.', 'tangnest-robotics' );
@@ -48,8 +51,8 @@ class TR_Student_Edit {
 				$errors[] = __( 'First and last name are required for a new parent.', 'tangnest-robotics' );
 			}
 
-			if ( ! preg_match( '/^07\d{8}$/', $new_phone ) ) {
-				$errors[] = __( 'Phone must be in the format 07XXXXXXXX.', 'tangnest-robotics' );
+			if ( ! preg_match( '/^\+[1-9]\d{7,14}$/', $new_phone ) ) {
+				$errors[] = __( 'Phone must be the full international number, starting with + and the country code — e.g. +250788123456.', 'tangnest-robotics' );
 			}
 		} else {
 			$family_id = isset( $_POST['family_id'] ) ? absint( $_POST['family_id'] ) : 0;
@@ -256,7 +259,10 @@ class TR_Student_Edit {
 								</tr>
 								<tr>
 									<th><label for="tr-new-phone"><?php esc_html_e( 'Phone', 'tangnest-robotics' ); ?></label></th>
-									<td><input type="text" id="tr-new-phone" name="new_phone" placeholder="07XXXXXXXX" value="<?php echo esc_attr( $posted['new_phone'] ?? '' ); ?>"></td>
+									<td>
+										<input type="text" id="tr-new-phone" name="new_phone" placeholder="+250788123456" value="<?php echo esc_attr( $posted['new_phone'] ?? '' ); ?>">
+										<p class="description"><?php esc_html_e( 'Full number including country code, starting with +', 'tangnest-robotics' ); ?></p>
+									</td>
 								</tr>
 							</table>
 							<p class="description"><?php esc_html_e( 'A new family has no package yet — assign one on the Families screen afterward so it can be billed.', 'tangnest-robotics' ); ?></p>

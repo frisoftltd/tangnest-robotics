@@ -84,6 +84,13 @@ class TR_DB {
 			self::migrate_package_prices_to_price_table();
 		}
 
+		// A brand new install has no 07XXXXXXXX numbers to convert — every
+		// phone number is entered in full international format from the
+		// start under the validation this version ships.
+		if ( $previous_version && version_compare( $previous_version, '0.10.5', '<' ) ) {
+			self::migrate_phone_numbers_to_international_format();
+		}
+
 		update_option( self::DB_VERSION_OPTION, TANGNEST_ROBOTICS_DB_VERSION );
 	}
 
@@ -338,6 +345,57 @@ class TR_DB {
 			'already_set_count' => $skipped,
 			'incomplete_active_packages' => count( $incomplete ),
 			'incomplete_detail' => $incomplete,
+		] );
+	}
+
+	/**
+	 * v0.10.5 replaces the Rwanda-only 07XXXXXXXX phone field with a
+	 * plain international one — every number already on file was entered
+	 * under the old format and must become the E.164 form the rest of the
+	 * code now expects (TR_Notifications::msisdn(), the IremboPay
+	 * customer payload, the WhatsApp builders). Converts `0XXXXXXXXX` to
+	 * `+250XXXXXXXXX`; a number that already starts with `+` is left
+	 * alone (already migrated, or already entered correctly since this
+	 * version went live); anything matching neither shape is left alone
+	 * and logged by family ID — guessing at a malformed number is worse
+	 * than leaving it for the admin to fix by hand. Runs once, as part of
+	 * the version-gated upgrade above.
+	 */
+	private static function migrate_phone_numbers_to_international_format(): void {
+		global $wpdb;
+		$families_table = self::table_families();
+
+		$families = $wpdb->get_results( "SELECT id, parent_user_id FROM {$families_table}" );
+
+		$converted    = 0;
+		$needs_review = [];
+
+		foreach ( $families as $row ) {
+			$family_id = (int) $row->id;
+			$user_id   = (int) $row->parent_user_id;
+
+			$phone = get_user_meta( $user_id, 'phone_number', true );
+			if ( ! is_string( $phone ) || '' === $phone ) {
+				continue;
+			}
+
+			if ( 0 === strpos( $phone, '+' ) ) {
+				continue;
+			}
+
+			if ( preg_match( '/^0\d{9}$/', $phone ) ) {
+				update_user_meta( $user_id, 'phone_number', '+250' . substr( $phone, 1 ) );
+				$converted++;
+				continue;
+			}
+
+			$needs_review[] = $family_id;
+		}
+
+		TR_Logger::info( 'v0.10.5 migration: phone numbers converted to international format', [
+			'converted_count'  => $converted,
+			'needs_review'     => count( $needs_review ),
+			'needs_review_ids' => $needs_review,
 		] );
 	}
 

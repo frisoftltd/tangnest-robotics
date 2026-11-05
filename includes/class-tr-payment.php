@@ -114,8 +114,8 @@ class TR_Payment {
 	}
 
 	private static function create_new( TR_IremboPay_API $api, object $invoice, object $family, WP_User $user ): array {
-		$phone      = get_user_meta( $user->ID, 'phone_number', true );
-		$phone_e164 = preg_match( '/^07\d{8}$/', $phone ) ? '250' . preg_replace( '/^0/', '', $phone ) : '';
+		$phone        = get_user_meta( $user->ID, 'phone_number', true );
+		$phone_msisdn = TR_Notifications::msisdn( $phone );
 
 		$transaction_id = 'TR-' . $invoice->id . '-' . strtoupper( substr( wp_generate_password( 12, false, false ), 0, 8 ) );
 
@@ -149,7 +149,7 @@ class TR_Payment {
 			'paymentAccountIdentifier' => TR_IremboPay_Settings::payment_account_identifier(),
 			'customer'                 => [
 				'email'       => $user->user_email,
-				'phoneNumber' => $phone_e164,
+				'phoneNumber' => $phone_msisdn,
 				'name'        => $user->display_name,
 			],
 			'paymentItems'             => [ $payment_item ],

@@ -396,11 +396,29 @@ class TR_Notifications {
 	}
 
 	/**
+	 * E.164 ("+250788308807") to the bare-digits MSISDN form
+	 * ("250788308807") that WhatsApp's web.whatsapp.com/send and
+	 * IremboPay's customer.phoneNumber both actually want (v0.10.5). The
+	 * phone field itself always stores the E.164 form, with the +; this
+	 * is the one place that strips it, for the two external APIs that
+	 * don't want it. Returns '' — never a guess — if $phone isn't valid
+	 * E.164 to begin with (no country-specific handling of any kind; the
+	 * same check the phone field itself is validated against on save).
+	 */
+	public static function msisdn( string $phone ): string {
+		if ( ! preg_match( '/^\+[1-9]\d{7,14}$/', $phone ) ) {
+			return '';
+		}
+
+		return substr( $phone, 1 );
+	}
+
+	/**
 	 * Shared by every WhatsApp send in the plugin (access links, payment
 	 * reminders). Each line is esc_attr() + urlencode()'d individually,
 	 * then joined with a lowercase "%0a" — urlencode()'ing the already-joined
 	 * string would encode the "%0a" markers themselves and collapse every
-	 * line break. Returns '' if the phone isn't in 07XXXXXXXX format.
+	 * line break. Returns '' if the phone isn't a valid E.164 number.
 	 *
 	 * The caller must emit the result via a raw header() call, never
 	 * wp_redirect()/wp_safe_redirect() (both run wp_sanitize_redirect(),
@@ -409,11 +427,10 @@ class TR_Notifications {
 	 * the line breaks WhatsApp Web needs to render the message.
 	 */
 	public static function build_whatsapp_message_url( string $phone, array $lines ): string {
-		if ( ! preg_match( '/^07\d{8}$/', $phone ) ) {
+		$whatsapp_number = self::msisdn( $phone );
+		if ( '' === $whatsapp_number ) {
 			return '';
 		}
-
-		$whatsapp_number = '250' . preg_replace( '/^0/', '', $phone );
 
 		$encoded_lines = array_map( static function ( $line ) {
 			return urlencode( esc_attr( $line ) );

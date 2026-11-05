@@ -404,7 +404,7 @@ class TR_Admin_Menu {
 	 */
 	private function build_access_link_whatsapp_url( object $family ): string {
 		$phone = get_user_meta( (int) $family->parent_user_id, 'phone_number', true );
-		if ( ! preg_match( '/^07\d{8}$/', $phone ) ) {
+		if ( '' === TR_Notifications::msisdn( $phone ) ) {
 			TR_Logger::error( 'WhatsApp access link not sent: no valid phone number on file', [ 'family_id' => $family->id ] );
 			return '';
 		}

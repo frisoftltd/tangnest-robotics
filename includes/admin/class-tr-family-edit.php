@@ -41,9 +41,15 @@ class TR_Family_Edit {
 		$family_id = isset( $_POST['family_id'] ) ? absint( $_POST['family_id'] ) : 0;
 		$mode      = isset( $_POST['parent_mode'] ) && 'new' === $_POST['parent_mode'] ? 'new' : 'existing';
 
+		// v0.10.5: international, not Rwanda-only — spaces, dashes,
+		// brackets and dots are stripped before checking; what's left
+		// must be a plain E.164 number (+, a country code not starting
+		// with 0, 8-15 digits total). No country list, nothing
+		// Rwanda-specific.
 		$phone = isset( $_POST['phone'] ) ? sanitize_text_field( wp_unslash( $_POST['phone'] ) ) : '';
-		if ( ! preg_match( '/^07\d{8}$/', $phone ) ) {
-			$errors[] = __( 'Phone must be in the format 07XXXXXXXX.', 'tangnest-robotics' );
+		$phone = preg_replace( '/[\s\-().]/', '', $phone );
+		if ( ! preg_match( '/^\+[1-9]\d{7,14}$/', $phone ) ) {
+			$errors[] = __( 'Phone must be the full international number, starting with + and the country code — e.g. +250788123456.', 'tangnest-robotics' );
 		}
 
 		$package_id = isset( $_POST['package_id'] ) ? absint( $_POST['package_id'] ) : 0;
@@ -834,7 +840,10 @@ class TR_Family_Edit {
 					</tr>
 					<tr>
 						<th><label for="tr-phone"><?php esc_html_e( 'Phone', 'tangnest-robotics' ); ?></label></th>
-						<td><input type="text" id="tr-phone" name="phone" placeholder="07XXXXXXXX" value="<?php echo esc_attr( $phone ); ?>"></td>
+						<td>
+							<input type="text" id="tr-phone" name="phone" placeholder="+250788123456" value="<?php echo esc_attr( $phone ); ?>">
+							<p class="description"><?php esc_html_e( 'Full number including country code, starting with +', 'tangnest-robotics' ); ?></p>
+						</td>
 					</tr>
 					<tr>
 						<th><label for="tr-package"><?php esc_html_e( 'Package', 'tangnest-robotics' ); ?></label></th>
