@@ -249,6 +249,9 @@ No changes made. Re-run with --execute to apply.
 
 ## Changelog
 
+### v0.10.3
+- New: A "How many children?" selector (1–6) on the family add/edit screen's Add child section — changing it adds or removes blank rows to match, and the live price line updates immediately from the count, before any name is typed. Starts at the family's current active child count; removing a row and the selector stay in sync in both directions.
+
 ### v0.10.2
 - Fix: `price_additional_child` is optional, not a sign of an incomplete package — `wp tangnest status`'s "Packages with incomplete pricing" no longer flags it; a family it actually blocks (4+ active children, no additional-child rate) now shows under a new "Families that cannot be priced" heading instead
 - Fix: `wp tangnest consolidate-packages --execute` reports in past tense ("Updated"/"Reassigned"/"Archived") instead of "Would...", and the success line prints last, after the plan

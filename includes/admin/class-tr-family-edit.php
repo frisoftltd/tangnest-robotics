@@ -953,6 +953,23 @@ class TR_Family_Edit {
 
 				<h3><?php esc_html_e( 'Add child', 'tangnest-robotics' ); ?></h3>
 				<p class="description"><?php esc_html_e( 'Add as many children as needed, then save once. They all share the family\'s package above.', 'tangnest-robotics' ); ?></p>
+				<?php
+				// v0.10.3: the TOTAL child count (existing active children
+				// plus whatever rows are shown below), not a count of new
+				// rows alone — it starts at the family's current active
+				// count and only the rows ABOVE that count are new. Min
+				// can never drop below that current count (removing an
+				// existing active child happens elsewhere, via the
+				// deactivate action, not here); max is 6 unless the family
+				// already has more than that.
+				$selector_min     = max( 1, $active_child_count );
+				$selector_max     = max( 6, $active_child_count );
+				$selector_initial = max( $selector_min, $active_child_count + count( $posted_children ) );
+				?>
+				<p>
+					<label for="tr-child-count-selector"><?php esc_html_e( 'How many children?', 'tangnest-robotics' ); ?></label>
+					<input type="number" id="tr-child-count-selector" min="<?php echo esc_attr( $selector_min ); ?>" max="<?php echo esc_attr( $selector_max ); ?>" value="<?php echo esc_attr( $selector_initial ); ?>" style="width:5em;">
+				</p>
 				<table class="wp-list-table widefat fixed striped" id="tr-new-children-table">
 					<thead>
 						<tr>
@@ -1048,6 +1065,21 @@ class TR_Family_Edit {
 			programStartInput.addEventListener( 'change', updateProgramEndDefault );
 			packageSelect.addEventListener( 'change', updateProgramEndDefault );
 
+			// --- v0.10.3: "How many children?" selector — the single
+			// source of truth for the total child count. Rows are kept in
+			// sync with it (not the other way round), and the live price
+			// line reads straight from it, so the price updates the
+			// moment the number changes, before any name is typed.
+
+			var selectorInput = document.getElementById( 'tr-child-count-selector' );
+
+			function clampSelector( v ) {
+				var min = Math.max( 1, existingActiveCount );
+				var max = Math.max( 6, existingActiveCount );
+				if ( isNaN( v ) ) { v = min; }
+				return Math.min( max, Math.max( min, v ) );
+			}
+
 			// --- v0.10.0 Task 5: live price line + mid-programme-join note ---
 
 			var livePriceEl = document.querySelector( '#tr-live-price strong' );
@@ -1089,7 +1121,11 @@ class TR_Family_Edit {
 				if ( ! livePriceEl ) { return; }
 
 				var detail = packageDetails[ packageSelect.value ];
-				var count  = existingActiveCount + filledChildRowCount();
+				// v0.10.3: driven by the "How many children?" selector,
+				// not by how many rows actually have a name typed in — the
+				// price previews from the count immediately, before any
+				// typing happens.
+				var count = selectorInput ? clampSelector( parseInt( selectorInput.value, 10 ) ) : existingActiveCount + filledChildRowCount();
 
 				if ( ! detail || count < 1 ) {
 					livePriceEl.textContent = '';
@@ -1164,15 +1200,75 @@ class TR_Family_Edit {
 
 				tr.querySelector( '.tr-remove-child' ).addEventListener( 'click', function() {
 					tr.parentNode.removeChild( tr );
-					updateLivePrice();
+					// Removing a row and the selector must never disagree
+					// (v0.10.3) — one row gone means the total is one less,
+					// regardless of which row it was. Re-sync rather than
+					// just decrementing: if that would take the selector
+					// below its floor (1, or the family's existing active
+					// count), the clamp pulls it back up and sync restores
+					// the row that removal would otherwise have dropped
+					// below it — the two can never end up disagreeing.
+					if ( selectorInput ) {
+						selectorInput.value = clampSelector( parseInt( selectorInput.value, 10 ) - 1 );
+						syncRowsToSelector();
+					} else {
+						updateLivePrice();
+					}
 				} );
 
 				updateLivePrice();
 			}
 
-			addBtn.addEventListener( 'click', function() { addChildRow(); } );
+			/**
+			 * Adds or removes blank rows (from the end) until the number
+			 * of new rows matches what the selector says the total should
+			 * be, given how many children already exist. The selector is
+			 * the source of truth here — rows never drive it, only the
+			 * other way round (remove-row and "Add child" are the two
+			 * exceptions, and both update the selector themselves before
+			 * this ever needs to run again).
+			 */
+			function syncRowsToSelector() {
+				if ( ! selectorInput ) { return; }
+
+				selectorInput.value = clampSelector( parseInt( selectorInput.value, 10 ) );
+
+				var neededRows = Math.max( 0, selectorInput.value - existingActiveCount );
+				var currentRows = body.children.length;
+
+				while ( currentRows < neededRows ) {
+					addChildRow();
+					currentRows++;
+				}
+				while ( currentRows > neededRows && body.lastElementChild ) {
+					body.removeChild( body.lastElementChild );
+					currentRows--;
+				}
+
+				updateLivePrice();
+			}
+
+			if ( selectorInput ) {
+				selectorInput.addEventListener( 'input', syncRowsToSelector );
+				selectorInput.addEventListener( 'change', syncRowsToSelector );
+			}
+
+			addBtn.addEventListener( 'click', function() {
+				if ( selectorInput ) {
+					selectorInput.value = clampSelector( parseInt( selectorInput.value, 10 ) + 1 );
+					syncRowsToSelector();
+				} else {
+					addChildRow();
+				}
+			} );
 
 			postedChildren.forEach( function( row ) { addChildRow( row ); } );
+
+			// The rows above already match what the selector was rendered
+			// with server-side (existing children + posted rows) — this
+			// just confirms it rather than assuming it, in case the two
+			// ever drift (e.g. a future change to how rows are seeded).
+			syncRowsToSelector();
 
 			packageSelect.addEventListener( 'change', updateLivePrice );
 
