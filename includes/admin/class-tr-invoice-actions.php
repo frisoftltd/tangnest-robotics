@@ -21,7 +21,92 @@ class TR_Invoice_Actions {
 
 		if ( isset( $_POST['tr_invoice_create_nonce'] ) ) {
 			self::handle_create_invoice_submit();
+			return;
 		}
+
+		if ( isset( $_POST['tr_invoice_edit_amount_nonce'] ) ) {
+			self::handle_edit_amount_submit();
+		}
+	}
+
+	/**
+	 * A deliberate manual override (v0.10.0 Task 6) — a part-month credit
+	 * or a goodwill adjustment the normal recalculation rules have no path
+	 * for. Refused server-side on anything but a pending/overdue invoice,
+	 * regardless of what the row action link was rendered for, same as
+	 * every other status-gated action on this screen.
+	 */
+	private static function handle_edit_amount_submit(): void {
+		$invoice_id = isset( $_POST['invoice_id'] ) ? absint( $_POST['invoice_id'] ) : 0;
+
+		check_admin_referer( 'tr_invoice_edit_amount_' . $invoice_id, 'tr_invoice_edit_amount_nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You do not have permission to do that.', 'tangnest-robotics' ) );
+		}
+
+		$invoice = TR_Invoices::get( $invoice_id );
+		if ( null === $invoice ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_INVOICES ) );
+			exit;
+		}
+
+		if ( ! in_array( $invoice->status, [ 'pending', 'overdue' ], true ) ) {
+			set_transient( self::error_key(), [ __( 'Only a pending or overdue invoice\'s amount can be edited.', 'tangnest-robotics' ) ], MINUTE_IN_SECONDS );
+			wp_safe_redirect( admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_INVOICES ) );
+			exit;
+		}
+
+		$errors = [];
+
+		$new_amount = isset( $_POST['amount'] ) ? (float) wp_unslash( $_POST['amount'] ) : -1;
+		if ( $new_amount <= 0 ) {
+			$errors[] = __( 'Amount must be greater than zero.', 'tangnest-robotics' );
+		}
+
+		$reason = isset( $_POST['amount_edit_reason'] ) ? sanitize_textarea_field( wp_unslash( $_POST['amount_edit_reason'] ) ) : '';
+		if ( '' === trim( $reason ) ) {
+			$errors[] = __( 'A reason is required to edit an invoice amount.', 'tangnest-robotics' );
+		}
+
+		if ( ! empty( $errors ) ) {
+			set_transient( self::error_key(), $errors, MINUTE_IN_SECONDS );
+			wp_safe_redirect( self::form_url( 'edit_amount', $invoice_id ) );
+			exit;
+		}
+
+		$old_amount = (float) $invoice->amount;
+
+		TR_Invoices::edit_amount( $invoice_id, $new_amount, $reason );
+
+		$admin = wp_get_current_user();
+
+		TR_Logger::info( 'Invoice amount edited', [
+			'invoice_id' => $invoice_id,
+			'family_id'  => $invoice->family_id,
+			'old_amount' => $old_amount,
+			'new_amount' => $new_amount,
+			'reason'     => $reason,
+			'edited_by'  => $admin->user_login,
+		] );
+
+		TR_Family_Events::record(
+			(int) $invoice->family_id,
+			'invoice_amount_edited',
+			sprintf(
+				/* translators: 1: invoice ID, 2: old amount, 3: new amount, 4: reason */
+				__( 'Invoice #%1$d amount edited from %2$s to %3$s RWF (%4$s)', 'tangnest-robotics' ),
+				$invoice_id,
+				number_format( $old_amount, 0 ),
+				number_format( $new_amount, 0 ),
+				$reason
+			),
+			number_format( $old_amount, 2, '.', '' ),
+			number_format( $new_amount, 2, '.', '' ),
+			$admin->ID
+		);
+
+		self::redirect_with_notice( 'amount_edited' );
 	}
 
 	/**
@@ -130,6 +215,20 @@ class TR_Invoice_Actions {
 			'period_start' => $period_start,
 			'period_end'   => $period_end,
 		] );
+
+		TR_Family_Events::record(
+			$family_id,
+			'invoice_created',
+			sprintf(
+				/* translators: 1: billing period, 2: amount */
+				__( 'Invoice created manually for %1$s (%2$s RWF)', 'tangnest-robotics' ),
+				$period,
+				number_format( $amount, 0 )
+			),
+			null,
+			(string) $invoice_id,
+			get_current_user_id()
+		);
 
 		// Every invoice-creation path emails the parent — no opt-in, no
 		// toggle. The other two paths (cron, Generate Invoices Now) both
@@ -303,6 +402,20 @@ class TR_Invoice_Actions {
 			// a package finishes together, so there is one figure to
 			// advance, not one per enrollment.
 			TR_Families::increment_months_paid( (int) $invoice->family_id );
+
+			TR_Family_Events::record(
+				(int) $invoice->family_id,
+				'invoice_paid',
+				sprintf(
+					/* translators: 1: invoice ID, 2: payment method */
+					__( 'Invoice #%1$d paid (%2$s)', 'tangnest-robotics' ),
+					$invoice_id,
+					ucfirst( str_replace( '_', ' ', $method ) )
+				),
+				null,
+				(string) $invoice_id,
+				get_current_user_id()
+			);
 		}
 
 		self::redirect_with_notice( 'payment_recorded' );
@@ -719,6 +832,68 @@ class TR_Invoice_Actions {
 					</tr>
 				</table>
 				<?php submit_button( __( 'Waive Invoice', 'tangnest-robotics' ) ); ?>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_INVOICES ) ); ?>"><?php esc_html_e( 'Cancel', 'tangnest-robotics' ); ?></a>
+			</form>
+		</div>
+		<?php
+	}
+
+	public static function render_edit_amount_form( int $invoice_id ): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You do not have permission to access this page.', 'tangnest-robotics' ) );
+		}
+
+		$invoice = TR_Invoices::get( $invoice_id );
+		if ( null === $invoice ) {
+			wp_die( esc_html__( 'Invoice not found.', 'tangnest-robotics' ) );
+		}
+
+		if ( ! in_array( $invoice->status, [ 'pending', 'overdue' ], true ) ) {
+			wp_die( esc_html__( 'Only a pending or overdue invoice\'s amount can be edited.', 'tangnest-robotics' ) );
+		}
+
+		$errors = get_transient( self::error_key() );
+		if ( $errors ) {
+			delete_transient( self::error_key() );
+		}
+
+		$family = TR_Families::get( (int) $invoice->family_id );
+		$user   = $family ? get_userdata( (int) $family->parent_user_id ) : null;
+		?>
+		<div class="wrap tr-admin-wrap">
+			<h1><?php esc_html_e( 'Edit Invoice Amount', 'tangnest-robotics' ); ?></h1>
+
+			<?php if ( ! empty( $errors ) ) : ?>
+				<div class="notice notice-error"><ul><?php foreach ( $errors as $error ) : ?><li><?php echo esc_html( $error ); ?></li><?php endforeach; ?></ul></div>
+			<?php endif; ?>
+
+			<p>
+				<?php
+				printf(
+					/* translators: 1: parent name, 2: billing period, 3: current amount */
+					esc_html__( '%1$s — period %2$s — currently %3$s', 'tangnest-robotics' ),
+					esc_html( $user ? $user->display_name : __( '(no user)', 'tangnest-robotics' ) ),
+					esc_html( $invoice->period ),
+					esc_html( number_format( (float) $invoice->amount, 2 ) . ' ' . $invoice->currency )
+				);
+				?>
+			</p>
+			<p class="description"><?php esc_html_e( 'A deliberate manual override — a part-month credit or a goodwill adjustment, not a recalculation. Clears any existing IremboPay reference, so paying this invoice creates a fresh one at the new amount.', 'tangnest-robotics' ); ?></p>
+
+			<form method="post">
+				<?php wp_nonce_field( 'tr_invoice_edit_amount_' . $invoice_id, 'tr_invoice_edit_amount_nonce' ); ?>
+				<input type="hidden" name="invoice_id" value="<?php echo esc_attr( $invoice_id ); ?>">
+				<table class="form-table" role="presentation">
+					<tr>
+						<th><label for="tr-edit-amount"><?php esc_html_e( 'New amount (RWF)', 'tangnest-robotics' ); ?></label></th>
+						<td><input type="number" id="tr-edit-amount" name="amount" step="0.01" min="0.01" required value="<?php echo esc_attr( $invoice->amount ); ?>"></td>
+					</tr>
+					<tr>
+						<th><label for="tr-edit-amount-reason"><?php esc_html_e( 'Reason (required)', 'tangnest-robotics' ); ?></label></th>
+						<td><textarea id="tr-edit-amount-reason" name="amount_edit_reason" rows="3" class="large-text" required></textarea></td>
+					</tr>
+				</table>
+				<?php submit_button( __( 'Save New Amount', 'tangnest-robotics' ) ); ?>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_INVOICES ) ); ?>"><?php esc_html_e( 'Cancel', 'tangnest-robotics' ); ?></a>
 			</form>
 		</div>

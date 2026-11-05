@@ -37,19 +37,23 @@ A one-screen overview: families, children, packages, invoices, money,
 the next billing date, cron, online payments and the debug-log toggle —
 plus anything worth flagging (an active package with no product code
 and no site-wide default, a missing cron event, online payments enabled
-with no secret key), and a dedicated **Cannot be billed** list of every
+with no secret key), a dedicated **Cannot be billed** list of every
 active family that `TR_Invoice_Generator::is_billable()` would reject
 right now — no package, no active children, a zero monthly amount, or
 an already-ended programme — with its family ID, parent name, and the
-specific reason. The "next billing" figure above only ever counts
-families that pass that same check, so a family stranded here can never
-silently pollute it with a date it will never actually reach. An active
-family that will never be invoiced is a silent revenue leak; this makes
-it visible instead of just excluding it from the projection.
+specific reason, and (v0.10.0) **Packages with incomplete pricing**
+(an active package missing a price for 1, 2, 3 or each additional
+child) and **Negotiated rates needing review** (a family's negotiated
+amount no longer matches its active child count). The "next billing"
+figure above only ever counts families that pass the billable check, so
+a family stranded here can never silently pollute it with a date it
+will never actually reach. An active family that will never be invoiced
+is a silent revenue leak; this makes it visible instead of just
+excluding it from the projection.
 
 ```
 $ wp tangnest status
-Tangnest Robotics 0.9.2  (DB 0.8.6)
+Tangnest Robotics 0.10.0  (DB 0.10.0)
 
 Families      9 active, 0 inactive
 Children      14
@@ -66,6 +70,10 @@ Debug log     off
 No issues found.
 
 Cannot be billed: none.
+
+Packages with incomplete pricing: none.
+
+Negotiated rates needing review: none.
 ```
 
 ```
@@ -77,6 +85,12 @@ $ wp tangnest status
 
 Cannot be billed (1)
   #2  Test family  family has no package
+
+Packages with incomplete pricing (1)
+  #14  Applied Robotics & Coding  missing 3 children, each additional child
+
+Negotiated rates needing review (1)
+  #14  Test family  This family has a negotiated rate of 130,000 RWF agreed for 3 children. They now have 2. Enter a new agreed amount, or clear the negotiated rate to use the standard price of 120,000 RWF.
 ```
 
 ### `wp tangnest generate --dry-run`
@@ -106,8 +120,10 @@ No changes made. Run without --dry-run to create these.
 ### `wp tangnest family <id>`
 
 Everything about one family — parent, package, billing day, programme
-dates, progress, children, access/message token status, and every
-invoice on file. Replaces reaching for a hand-written SQL query.
+dates, progress, children, access/message token status, every invoice
+on file, and (v0.10.0) its full **History** — every child added or
+deactivated, amount change, negotiated-rate decision and programme-date
+edit, newest first. Replaces reaching for a hand-written SQL query.
 
 ```
 $ wp tangnest family 5
@@ -118,6 +134,10 @@ Package       Intro Robotics
 Amount        120,000 RWF / month
 Billing day   26
 ...
+
+History (2)
+  2026-01-26  Kagame Vincent added — Tangnest
+  2026-03-14  Negotiated rate set to 140,000 RWF (2 children) — Tangnest
 ```
 
 ### `wp tangnest invoices`
@@ -172,6 +192,17 @@ amount returned by IremboPay: 50
 ```
 
 ## Changelog
+
+### v0.10.0
+- Changed: Packages now carry a monthly price for 1, 2, 3 and each additional child
+- New: A family's amount is calculated from its active child count and updates as children are added or deactivated
+- New: Negotiated per-family rates, recorded against the child count they were agreed for
+- New: Programme duration is now set per family; the package duration is only a default and is optional
+- New: The family form shows the new monthly amount live as children are added
+- New: A pending invoice's amount can be edited with a recorded reason
+- New: Change history on each family — children, amounts, rates and dates, with who and when
+- Removed: Package-mismatch warnings, superseded by child-count pricing
+- Note: IremboPay accepts any amount against a valid product code, so prices are set entirely in WordPress
 
 ### v0.9.4
 - New: `wp tangnest test-product-amount` diagnostic for checking how IremboPay handles a product amount that differs from the one registered

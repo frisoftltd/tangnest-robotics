@@ -3,12 +3,21 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 /**
  * Family add/edit form: pick-or-create parent WP user, phone/meta, the
- * package selection that drives price/duration/product code (v0.8.0 —
- * replaces the old per-child program + bundle-override model), the
- * billing-day anchor (read-only once set unless the admin explicitly
- * checks "override anchor"), and an inline repeatable Children section so
- * several siblings can be added in one save instead of one trip through
- * the standalone Add Student screen per child.
+ * package selection, the billing-day anchor (read-only once set unless
+ * the admin explicitly checks "override anchor"), and an inline
+ * repeatable Children section so several siblings can be added in one
+ * save instead of one trip through the standalone Add Student screen
+ * per child.
+ *
+ * v0.10.0: monthly_amount is no longer a straight snapshot of the
+ * package's own fee — it's TR_Families::price_for_child_count() (or a
+ * negotiated override) resolved for this family's prospective active
+ * child count (existing active children plus whatever's being added in
+ * this very submit), computed and validated BEFORE anything is written.
+ * A missing price or an unresolved stale negotiated rate blocks the
+ * whole save with an inline error, the same errors[] + redisplay
+ * pattern every other validation on this form already uses — nothing
+ * is written until the admin provides a valid answer.
  */
 class TR_Family_Edit {
 	const NONCE = 'tr_family_save';
@@ -81,6 +90,80 @@ class TR_Family_Edit {
 
 		[ $valid_children, $child_errors ] = self::parse_children_rows( $_POST['new_children'] ?? [] );
 		$errors = array_merge( $errors, $child_errors );
+
+		$existing_family = $family_id > 0 ? TR_Families::get( $family_id ) : null;
+
+		// v0.10.0: existing active children plus whatever's being added in
+		// this very submit (inserted as 'active' further down) — the count
+		// every price lookup below is driven by.
+		$existing_active_count = $existing_family ? TR_Students::count( [ 'family_id' => $family_id, 'status' => 'active' ] ) : 0;
+		$prospective_count     = $existing_active_count + count( $valid_children );
+
+		// Negotiated rate (Task 3). negotiated_for_child_count is never an
+		// admin-entered field — it is always the count at the moment the
+		// amount is actually saved, assigned here, not posted.
+		$negotiated_checked      = ! empty( $_POST['negotiated_enabled'] );
+		$negotiated_amount_input = isset( $_POST['negotiated_amount'] ) ? trim( wp_unslash( $_POST['negotiated_amount'] ) ) : '';
+		$negotiated_note_input   = isset( $_POST['negotiated_note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['negotiated_note'] ) ) : '';
+
+		$existing_negotiated_amount    = $existing_family && null !== $existing_family->negotiated_amount ? (float) $existing_family->negotiated_amount : null;
+		$existing_negotiated_for_count = $existing_family && null !== $existing_family->negotiated_for_child_count ? (int) $existing_family->negotiated_for_child_count : null;
+
+		$negotiated_amount_final    = null;
+		$negotiated_for_count_final = null;
+		$negotiated_note_final      = '';
+		$pricing_blocked            = false;
+
+		if ( $negotiated_checked ) {
+			if ( '' === $negotiated_amount_input || ! is_numeric( $negotiated_amount_input ) || (float) $negotiated_amount_input <= 0 ) {
+				$errors[]        = __( 'Enter a valid negotiated amount, or uncheck the negotiated rate box to use the standard price.', 'tangnest-robotics' );
+				$pricing_blocked = true;
+			} else {
+				$negotiated_amount_posted = (float) $negotiated_amount_input;
+
+				// Already stale (agreed for a count that no longer matches)
+				// AND nothing about the figure actually changed in this
+				// submit — simply resaving the form must never silently
+				// "fix" a stale rate just because the count moved while
+				// this exact amount happened to still be sitting in the
+				// field.
+				$unresolved_stale = null !== $existing_negotiated_amount
+					&& null !== $existing_negotiated_for_count
+					&& $existing_negotiated_for_count !== $prospective_count
+					&& abs( $existing_negotiated_amount - $negotiated_amount_posted ) < 0.005;
+
+				if ( $unresolved_stale ) {
+					$errors[]        = TR_Families::pricing_issue_message( [
+						'type'                       => 'stale_negotiated',
+						'child_count'                => $prospective_count,
+						'negotiated_amount'          => $existing_negotiated_amount,
+						'negotiated_for_child_count' => $existing_negotiated_for_count,
+						'standard_price'             => null !== $package ? TR_Families::price_for_child_count( $package_id, $prospective_count ) : null,
+					] );
+					$pricing_blocked = true;
+				} else {
+					$negotiated_amount_final    = $negotiated_amount_posted;
+					$negotiated_for_count_final = $prospective_count;
+					$negotiated_note_final      = $negotiated_note_input;
+				}
+			}
+		}
+
+		// The amount this save would actually write — resolved and
+		// validated BEFORE anything is written. A missing table price
+		// blocks the whole save exactly like every other error on this
+		// form; it never falls back to zero or to the previous amount.
+		$monthly_amount = null;
+		if ( null !== $package && ! $pricing_blocked ) {
+			if ( null !== $negotiated_amount_final ) {
+				$monthly_amount = $negotiated_amount_final;
+			} else {
+				$monthly_amount = TR_Families::price_for_child_count( $package_id, $prospective_count );
+				if ( null === $monthly_amount ) {
+					$errors[] = TR_Families::pricing_issue_message( [ 'type' => 'missing_price', 'child_count' => $prospective_count ] );
+				}
+			}
+		}
 
 		$user_id  = 0;
 		$new_email = $new_first = $new_last = '';
@@ -175,24 +258,24 @@ class TR_Family_Edit {
 		update_user_meta( $user_id, 'parent_name', $user->display_name );
 		update_user_meta( $user_id, 'parent_email', $user->user_email );
 
-		$existing_family = $family_id > 0 ? TR_Families::get( $family_id ) : null;
-
 		$data = [
-			// A snapshot of the package's price right now — never
-			// recalculated automatically later, so a subsequent price
-			// change on the package never retroactively alters this
-			// family's billing. Re-saving the family (e.g. to switch
-			// package) always refreshes the snapshot to the new package's
-			// current price.
-			'monthly_amount'     => $package->default_monthly_fee,
-			'package_id'         => $package_id,
-			'months_paid'        => $existing_family ? (int) $existing_family->months_paid : 0,
-			'parent_user_id'     => $user_id,
-			'currency'           => 'RWF',
-			'program_start_date' => $program_start_date,
-			'program_end_date'   => $program_end_date,
-			'status'             => $status,
-			'notes'              => $notes,
+			// Resolved and validated above, before any write happened —
+			// never recalculated automatically later, so a subsequent
+			// package price change never retroactively alters this
+			// family's billing (v0.8.0 rule, still holds under v0.10.0's
+			// per-child-count table).
+			'monthly_amount'             => $monthly_amount,
+			'package_id'                 => $package_id,
+			'months_paid'                => $existing_family ? (int) $existing_family->months_paid : 0,
+			'parent_user_id'             => $user_id,
+			'currency'                   => 'RWF',
+			'program_start_date'         => $program_start_date,
+			'program_end_date'           => $program_end_date,
+			'negotiated_amount'          => $negotiated_amount_final,
+			'negotiated_for_child_count' => $negotiated_for_count_final,
+			'negotiated_note'            => $negotiated_note_final,
+			'status'                     => $status,
+			'notes'                      => $notes,
 		];
 
 		if ( $family_id > 0 ) {
@@ -223,6 +306,7 @@ class TR_Family_Edit {
 		// one, so a family's billing day still gets set from the day the
 		// first child is actually added.
 		$today_for_anchor = current_time( 'Y-m-d' );
+		$admin_id         = get_current_user_id();
 
 		foreach ( $valid_children as $child ) {
 			TR_Students::insert( [
@@ -235,6 +319,32 @@ class TR_Family_Edit {
 			// Idempotent — only the first child ever actually moves this
 			// from 0, regardless of how many rows are processed here.
 			TR_Families::set_billing_anchor( $family_id, $today_for_anchor );
+
+			TR_Family_Events::record(
+				$family_id,
+				'child_added',
+				sprintf(
+					/* translators: %s: child's full name */
+					__( '%s added', 'tangnest-robotics' ),
+					trim( $child['first_name'] . ' ' . $child['last_name'] )
+				),
+				null,
+				null,
+				$admin_id
+			);
+		}
+
+		// Change events — only for an actual edit; a brand-new family has
+		// no "before" state worth describing as a change.
+		if ( $existing_family ) {
+			self::log_edit_events( $existing_family, $family_id, [
+				'package_id'                 => $package_id,
+				'monthly_amount'             => $monthly_amount,
+				'program_start_date'         => $program_start_date,
+				'program_end_date'           => $program_end_date,
+				'negotiated_amount'          => $negotiated_amount_final,
+				'negotiated_for_child_count' => $negotiated_for_count_final,
+			], $admin_id );
 		}
 
 		TR_Families::clear_composition_flag( $family_id );
@@ -246,9 +356,13 @@ class TR_Family_Edit {
 		// v0.9.3: a package change can leave the current month's already-
 		// issued invoice priced for the old package. Never re-priced
 		// automatically — stash what's on offer and let render() present it
-		// as an explicit, dismissible choice on the next load.
+		// as an explicit, dismissible choice on the next load. Stays
+		// exactly as built — package-switch-triggered only, not extended
+		// to every amount change under v0.10.0's child-count pricing; a
+		// mid-period child-count or negotiated-rate change intentionally
+		// waits for the next billing cycle (see spec).
 		if ( $existing_family && (int) $existing_family->package_id !== $package_id ) {
-			self::maybe_stash_invoice_offer( $family_id, $package );
+			self::maybe_stash_invoice_offer( $family_id, $monthly_amount );
 		}
 
 		wp_safe_redirect( add_query_arg( [
@@ -271,7 +385,7 @@ class TR_Family_Edit {
 	 * "unchanged" rather than silently skipped, so the admin sees that
 	 * nothing happened and why.
 	 */
-	private static function maybe_stash_invoice_offer( int $family_id, object $package ): void {
+	private static function maybe_stash_invoice_offer( int $family_id, float $new_amount ): void {
 		$current_period  = current_datetime()->format( 'Y-m' );
 		$current_invoice = TR_Invoices::get_for_period( $family_id, $current_period );
 
@@ -283,12 +397,123 @@ class TR_Family_Edit {
 			set_transient( self::invoice_offer_key(), [
 				'invoice_id' => (int) $current_invoice->id,
 				'old_amount' => (float) $current_invoice->amount,
-				'new_amount' => (float) $package->default_monthly_fee,
+				'new_amount' => $new_amount,
 			], MINUTE_IN_SECONDS );
 			return;
 		}
 
 		set_transient( self::invoice_offer_key(), [ 'unchanged' => true ], MINUTE_IN_SECONDS );
+	}
+
+	/**
+	 * Writes a family event for each thing that actually changed in this
+	 * save — package, amount, negotiated rate, programme dates. Diffs
+	 * against $old (the family row as it was immediately before this
+	 * save) rather than re-deriving "what changed" from request data, so
+	 * this can never disagree with what was actually written.
+	 */
+	private static function log_edit_events( object $old, int $family_id, array $new, int $admin_id ): void {
+		if ( (int) ( $old->package_id ?? 0 ) !== (int) $new['package_id'] ) {
+			$old_package = ! empty( $old->package_id ) ? TR_Programs::get( (int) $old->package_id ) : null;
+			$new_package = TR_Programs::get( (int) $new['package_id'] );
+
+			TR_Family_Events::record(
+				$family_id,
+				'package_changed',
+				sprintf(
+					/* translators: 1: old package name, 2: new package name */
+					__( 'Package changed from "%1$s" to "%2$s"', 'tangnest-robotics' ),
+					$old_package->name ?? __( '(none)', 'tangnest-robotics' ),
+					$new_package->name ?? ''
+				),
+				$old_package->name ?? '',
+				$new_package->name ?? '',
+				$admin_id
+			);
+		}
+
+		if ( abs( (float) $old->monthly_amount - (float) $new['monthly_amount'] ) >= 0.005 ) {
+			TR_Family_Events::record(
+				$family_id,
+				'amount_changed',
+				sprintf(
+					/* translators: 1: old amount, 2: new amount */
+					__( 'Monthly amount changed from %1$s to %2$s RWF', 'tangnest-robotics' ),
+					number_format( (float) $old->monthly_amount, 0 ),
+					number_format( (float) $new['monthly_amount'], 0 )
+				),
+				number_format( (float) $old->monthly_amount, 2, '.', '' ),
+				number_format( (float) $new['monthly_amount'], 2, '.', '' ),
+				$admin_id
+			);
+		}
+
+		$old_start = TR_Families::is_date_set( $old->program_start_date ) ? $old->program_start_date : '';
+		$old_end   = TR_Families::is_date_set( $old->program_end_date ) ? $old->program_end_date : '';
+		$new_start = $new['program_start_date'] ?: '';
+		$new_end   = $new['program_end_date'] ?: '';
+
+		if ( $old_start !== $new_start || $old_end !== $new_end ) {
+			TR_Family_Events::record(
+				$family_id,
+				'programme_dates_changed',
+				sprintf(
+					/* translators: 1: new start date, 2: new end date */
+					__( 'Programme dates changed to %1$s – %2$s', 'tangnest-robotics' ),
+					'' !== $new_start ? $new_start : '—',
+					'' !== $new_end ? $new_end : '—'
+				),
+				trim( $old_start . ' – ' . $old_end, ' –' ),
+				trim( $new_start . ' – ' . $new_end, ' –' ),
+				$admin_id
+			);
+		}
+
+		$old_negotiated = null !== $old->negotiated_amount ? (float) $old->negotiated_amount : null;
+		$new_negotiated = $new['negotiated_amount'];
+
+		if ( null === $old_negotiated && null !== $new_negotiated ) {
+			TR_Family_Events::record(
+				$family_id,
+				'negotiated_set',
+				sprintf(
+					/* translators: 1: negotiated amount, 2: child count */
+					__( 'Negotiated rate set to %1$s RWF (%2$d children)', 'tangnest-robotics' ),
+					number_format( $new_negotiated, 0 ),
+					$new['negotiated_for_child_count']
+				),
+				null,
+				number_format( $new_negotiated, 2, '.', '' ),
+				$admin_id
+			);
+		} elseif ( null !== $old_negotiated && null === $new_negotiated ) {
+			TR_Family_Events::record(
+				$family_id,
+				'negotiated_cleared',
+				sprintf(
+					/* translators: %s: the cleared negotiated amount */
+					__( 'Negotiated rate cleared (was %s RWF)', 'tangnest-robotics' ),
+					number_format( $old_negotiated, 0 )
+				),
+				number_format( $old_negotiated, 2, '.', '' ),
+				null,
+				$admin_id
+			);
+		} elseif ( null !== $old_negotiated && null !== $new_negotiated && abs( $old_negotiated - $new_negotiated ) >= 0.005 ) {
+			TR_Family_Events::record(
+				$family_id,
+				'negotiated_changed',
+				sprintf(
+					/* translators: 1: old negotiated amount, 2: new negotiated amount */
+					__( 'Negotiated rate changed from %1$s to %2$s RWF', 'tangnest-robotics' ),
+					number_format( $old_negotiated, 0 ),
+					number_format( $new_negotiated, 0 )
+				),
+				number_format( $old_negotiated, 2, '.', '' ),
+				number_format( $new_negotiated, 2, '.', '' ),
+				$admin_id
+			);
+		}
 	}
 
 	/**
@@ -459,44 +684,46 @@ class TR_Family_Edit {
 		$selected_package_id = isset( $posted['package_id'] ) ? absint( $posted['package_id'] ) : (int) ( $family->package_id ?? 0 );
 		$selected_package    = $selected_package_id > 0 ? TR_Programs::get( $selected_package_id ) : null;
 
-		// v0.9.3: a child deactivated/reactivated on this family's own
-		// screen can leave its package sized for the wrong number of
-		// children — warn, and pre-select (but never silently apply) a
-		// same-course package sized for the current active count. Skipped
-		// on a validation-error redisplay ($posted set) so the admin's own
-		// in-progress selection is never overridden by this.
-		$mismatch                 = false;
-		$active_child_count       = 0;
-		$suggested_package        = null;
-		$mismatched_package_name  = '';
-		$mismatched_child_count   = 0;
-		if ( $family && empty( $posted ) && $selected_package && ! empty( $selected_package->child_count ) ) {
-			$active_child_count = TR_Students::count( [ 'family_id' => (int) $family->id, 'status' => 'active' ] );
-			if ( $active_child_count !== (int) $selected_package->child_count ) {
-				$mismatch                = true;
-				$mismatched_package_name = $selected_package->name;
-				$mismatched_child_count  = (int) $selected_package->child_count;
-				$suggested_package       = TR_Programs::find_matching_package( $selected_package, $active_child_count );
-				if ( $suggested_package ) {
-					$selected_package_id = (int) $suggested_package->id;
-					$selected_package    = $suggested_package;
-				}
-			}
-		}
-
 		$dropdown_packages = $active_packages;
 		if ( $selected_package && 'active' !== $selected_package->status ) {
 			$dropdown_packages[] = $selected_package;
 		}
 
+		// v0.10.0: the full price table per package, for the live price
+		// line's JS — a package no longer means one fixed fee or one child
+		// count (v0.9.3's package-mismatch notice and pre-select are gone
+		// along with that assumption).
 		$package_details = [];
 		foreach ( $dropdown_packages as $package ) {
 			$package_details[ (int) $package->id ] = [
-				'amount'   => number_format( (float) $package->default_monthly_fee, 2 ),
-				'duration' => (int) $package->duration_months,
+				'duration' => TR_Programs::has_duration( $package ) ? (int) $package->duration_months : 0,
 				'code'     => $package->irembopay_product_code ?? '',
+				'price1'   => null !== $package->price_1_child ? (float) $package->price_1_child : null,
+				'price2'   => null !== $package->price_2_children ? (float) $package->price_2_children : null,
+				'price3'   => null !== $package->price_3_children ? (float) $package->price_3_children : null,
+				'priceAdd' => null !== $package->price_additional_child ? (float) $package->price_additional_child : null,
 			];
 		}
+
+		$active_child_count = $family ? TR_Students::count( [ 'family_id' => (int) $family->id, 'status' => 'active' ] ) : 0;
+		$next_billing_date  = $family ? TR_Families::next_billing_date( (int) $family->id ) : null;
+
+		$negotiated_enabled_now = isset( $posted['negotiated_enabled'] )
+			? ! empty( $posted['negotiated_enabled'] )
+			: ( $family && null !== $family->negotiated_amount );
+		$negotiated_amount_now  = $posted['negotiated_amount'] ?? ( $family && null !== $family->negotiated_amount ? (string) (float) $family->negotiated_amount : '' );
+		$negotiated_note_now    = $posted['negotiated_note'] ?? ( $family->negotiated_note ?? '' );
+		$negotiated_for_count_saved = $family && null !== $family->negotiated_for_child_count ? (int) $family->negotiated_for_child_count : null;
+
+		$pricing_issue = $family ? TR_Families::pricing_issue( $family ) : null;
+
+		// v0.10.0 Task 5: a child added to a family whose programme has
+		// already started joins it and finishes with their siblings —
+		// children never carry their own dates (v0.8.1 removed those).
+		$programme_has_started = $family && TR_Families::is_date_set( $family->program_start_date ) && $family->program_start_date <= current_time( 'Y-m-d' );
+		$programme_end_label   = $family && TR_Families::is_date_set( $family->program_end_date )
+			? date_i18n( 'j M Y', strtotime( $family->program_end_date ) )
+			: '';
 
 		$posted_children = isset( $posted['new_children'] ) && is_array( $posted['new_children'] ) ? array_values( $posted['new_children'] ) : [];
 		?>
@@ -534,29 +761,9 @@ class TR_Family_Edit {
 				</div>
 			<?php endif; ?>
 
-			<?php if ( $mismatch ) : ?>
+			<?php if ( $pricing_issue && empty( $errors ) ) : ?>
 				<div class="notice notice-warning">
-					<p>
-						<?php
-						printf(
-							/* translators: 1: number of active children, 2: package's child count */
-							esc_html__( 'This family has %1$d active child(ren) but is on a package for %2$d. Their monthly amount may be wrong.', 'tangnest-robotics' ),
-							$active_child_count,
-							$mismatched_child_count
-						);
-						?>
-						<?php if ( $suggested_package ) : ?>
-							<?php
-							printf(
-								/* translators: %s: suggested package name */
-								esc_html__( 'Pre-selected a matching package below: "%s" — review and save to apply.', 'tangnest-robotics' ),
-								esc_html( $suggested_package->name )
-							);
-							?>
-						<?php else : ?>
-							<?php esc_html_e( 'No matching package was found for this course at this child count — please pick one manually.', 'tangnest-robotics' ); ?>
-						<?php endif; ?>
-					</p>
+					<p><?php echo esc_html( TR_Families::pricing_issue_message( $pricing_issue ) ); ?></p>
 				</div>
 			<?php endif; ?>
 
@@ -637,7 +844,7 @@ class TR_Family_Edit {
 								<?php foreach ( $dropdown_packages as $package ) : ?>
 									<option value="<?php echo esc_attr( $package->id ); ?>" <?php selected( $selected_package_id, (int) $package->id ); ?>>
 										<?php
-										echo esc_html( $package->name . ' — ' . number_format( (float) $package->default_monthly_fee, 2 ) . ' RWF' );
+										echo esc_html( $package->name );
 										if ( 'active' !== $package->status ) {
 											echo ' ' . esc_html__( '(inactive)', 'tangnest-robotics' );
 										}
@@ -649,20 +856,54 @@ class TR_Family_Edit {
 								<?php if ( $selected_package ) : ?>
 									<?php
 									printf(
-										/* translators: 1: amount, 2: duration in months, 3: product code */
-										esc_html__( '%1$s RWF/month — %2$d months — code %3$s', 'tangnest-robotics' ),
-										esc_html( number_format( (float) $selected_package->default_monthly_fee, 2 ) ),
-										(int) $selected_package->duration_months,
-										esc_html( $selected_package->irembopay_product_code ?: '(none)' )
+										/* translators: 1: product code, 2: default duration or "no default" */
+										esc_html__( 'Code %1$s — default duration %2$s', 'tangnest-robotics' ),
+										esc_html( $selected_package->irembopay_product_code ?: '(none)' ),
+										TR_Programs::has_duration( $selected_package )
+											/* translators: %d: number of months */
+											? esc_html( sprintf( __( '%d months', 'tangnest-robotics' ), (int) $selected_package->duration_months ) )
+											: esc_html__( 'not set', 'tangnest-robotics' )
 									);
 									?>
 								<?php else : ?>
-									<?php esc_html_e( 'Select a package to see its price, duration and product code.', 'tangnest-robotics' ); ?>
+									<?php esc_html_e( 'Select a package to see its product code and default duration.', 'tangnest-robotics' ); ?>
 								<?php endif; ?>
 							</p>
 							<?php if ( $family ) : ?>
 								<p class="description"><strong><?php echo esc_html( TR_Families::progress_label( $family ) ); ?></strong></p>
 							<?php endif; ?>
+							<p class="description" id="tr-live-price"><strong></strong></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Negotiated rate', 'tangnest-robotics' ); ?></th>
+						<td>
+							<label>
+								<input type="checkbox" name="negotiated_enabled" value="1" id="tr-negotiated-enabled" <?php checked( $negotiated_enabled_now ); ?>>
+								<?php esc_html_e( 'This family has an individually agreed amount, overriding the standard price', 'tangnest-robotics' ); ?>
+							</label>
+							<div id="tr-negotiated-fields" style="<?php echo $negotiated_enabled_now ? '' : 'display:none;'; ?>">
+								<p>
+									<label for="tr-negotiated-amount"><?php esc_html_e( 'Agreed amount (RWF)', 'tangnest-robotics' ); ?></label>
+									<input type="number" id="tr-negotiated-amount" name="negotiated_amount" step="0.01" min="0" value="<?php echo esc_attr( $negotiated_amount_now ); ?>">
+								</p>
+								<p>
+									<label for="tr-negotiated-note"><?php esc_html_e( 'Note (your own reference — why this rate)', 'tangnest-robotics' ); ?></label><br>
+									<textarea id="tr-negotiated-note" name="negotiated_note" rows="2" class="large-text"><?php echo esc_textarea( $negotiated_note_now ); ?></textarea>
+								</p>
+								<?php if ( null !== $negotiated_for_count_saved ) : ?>
+									<p class="description">
+										<?php
+										printf(
+											/* translators: %d: number of children the current rate was agreed for */
+											esc_html__( 'Currently agreed for %d children.', 'tangnest-robotics' ),
+											$negotiated_for_count_saved
+										);
+										?>
+									</p>
+								<?php endif; ?>
+							</div>
+							<p class="description"><?php esc_html_e( 'Unchecking this clears the negotiated rate — the family then bills the package\'s standard price for its active child count.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -686,7 +927,7 @@ class TR_Family_Edit {
 						<th><label for="tr-program-end"><?php esc_html_e( 'Programme end date', 'tangnest-robotics' ); ?></label></th>
 						<td>
 							<input type="date" id="tr-program-end" name="program_end_date" value="<?php echo esc_attr( $posted['program_end_date'] ?? ( $family->program_end_date ?? '' ) ); ?>">
-							<p class="description"><?php esc_html_e( 'Defaults to the start date plus the package\'s duration once you enter a start date — change it if this family needs a longer or shorter span.', 'tangnest-robotics' ); ?></p>
+							<p class="description"><?php esc_html_e( 'This family\'s own dates are authoritative (v0.10.0). When the selected package has a default duration, entering a start date defaults the end date to start + that length, editable as before. A package with no default duration leaves this for you to fill in.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -723,21 +964,48 @@ class TR_Family_Edit {
 					<tbody id="tr-new-children-body"></tbody>
 				</table>
 				<p><button type="button" class="button" id="tr-add-child"><?php esc_html_e( 'Add child', 'tangnest-robotics' ); ?></button></p>
+				<?php if ( $programme_has_started ) : ?>
+					<p class="description" id="tr-mid-programme-note" style="display:none;">
+						<?php
+						printf(
+							/* translators: %s: the family's programme end date */
+							esc_html__( 'This child joins the family\'s programme, ending %s with their siblings.', 'tangnest-robotics' ),
+							esc_html( $programme_end_label ?: __( '(end date not set)', 'tangnest-robotics' ) )
+						);
+						?>
+					</p>
+				<?php endif; ?>
 
 				<?php submit_button( $family ? __( 'Update Family', 'tangnest-robotics' ) : __( 'Add Family', 'tangnest-robotics' ) ); ?>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . TR_Admin_Menu::PAGE_FAMILIES ) ); ?>"><?php esc_html_e( 'Cancel', 'tangnest-robotics' ); ?></a>
 			</form>
+
+			<?php if ( $family ) : ?>
+				<h2><?php esc_html_e( 'History', 'tangnest-robotics' ); ?></h2>
+				<?php self::render_history( (int) $family->id ); ?>
+			<?php endif; ?>
 		</div>
 		<script>
 		(function() {
 			var packageDetails = <?php echo wp_json_encode( $package_details ); ?>;
 			var postedChildren = <?php echo wp_json_encode( $posted_children ); ?>;
 
+			// v0.10.0 Task 5 state — everything the live price line and the
+			// mid-programme note need that isn't already on the page.
+			var existingActiveCount    = <?php echo wp_json_encode( $active_child_count ); ?>;
+			var existingMonthlyAmount  = <?php echo wp_json_encode( $family ? (float) $family->monthly_amount : null ); ?>;
+			var existingNegotiatedAmount   = <?php echo wp_json_encode( $family && null !== $family->negotiated_amount ? (float) $family->negotiated_amount : null ); ?>;
+			var existingNegotiatedForCount = <?php echo wp_json_encode( $negotiated_for_count_saved ); ?>;
+			var nextBillingLabel       = <?php echo wp_json_encode( $next_billing_date ? date_i18n( 'j M Y', strtotime( $next_billing_date ) ) : '' ); ?>;
+			var programmeHasStarted    = <?php echo wp_json_encode( (bool) $programme_has_started ); ?>;
+
 			var packageSelect  = document.getElementById( 'tr-package' );
 			var detailsEl      = document.getElementById( 'tr-package-details' );
-			var noPackageText  = <?php echo wp_json_encode( __( 'Select a package to see its price, duration and product code.', 'tangnest-robotics' ) ); ?>;
-			var detailsFormat  = <?php echo wp_json_encode( __( '%1$s RWF/month — %2$d months — code %3$s', 'tangnest-robotics' ) ); ?>;
+			var noPackageText  = <?php echo wp_json_encode( __( 'Select a package to see its product code and default duration.', 'tangnest-robotics' ) ); ?>;
+			var detailsFormat  = <?php echo wp_json_encode( __( 'Code %1$s — default duration %2$s', 'tangnest-robotics' ) ); ?>;
 			var noCodeText     = <?php echo wp_json_encode( __( '(none)', 'tangnest-robotics' ) ); ?>;
+			var noDurationText = <?php echo wp_json_encode( __( 'not set', 'tangnest-robotics' ) ); ?>;
+			var monthsSuffix   = <?php echo wp_json_encode( __( 'months', 'tangnest-robotics' ) ); ?>;
 
 			function updatePackageDetails() {
 				var detail = packageDetails[ packageSelect.value ];
@@ -745,10 +1013,10 @@ class TR_Family_Edit {
 					detailsEl.textContent = noPackageText;
 					return;
 				}
+				var durationText = detail.duration > 0 ? ( detail.duration + ' ' + monthsSuffix ) : noDurationText;
 				detailsEl.textContent = detailsFormat
-					.replace( '%1$s', detail.amount )
-					.replace( '%2$d', detail.duration )
-					.replace( '%3$s', detail.code || noCodeText );
+					.replace( '%1$s', detail.code || noCodeText )
+					.replace( '%2$s', durationText );
 			}
 			packageSelect.addEventListener( 'change', updatePackageDetails );
 
@@ -770,13 +1038,97 @@ class TR_Family_Edit {
 			function updateProgramEndDefault() {
 				if ( ! programStartInput.value ) { return; }
 				var detail = packageDetails[ packageSelect.value ];
-				if ( ! detail ) { return; }
+				// No default duration on this package — leave the end date
+				// for the admin to fill in, don't overwrite it with a guess.
+				if ( ! detail || ! detail.duration ) { return; }
 				var next = addMonthsToDateString( programStartInput.value, detail.duration );
 				if ( next ) { programEndInput.value = next; }
 			}
 
 			programStartInput.addEventListener( 'change', updateProgramEndDefault );
 			packageSelect.addEventListener( 'change', updateProgramEndDefault );
+
+			// --- v0.10.0 Task 5: live price line + mid-programme-join note ---
+
+			var livePriceEl = document.querySelector( '#tr-live-price strong' );
+			var midNoteEl   = document.getElementById( 'tr-mid-programme-note' );
+
+			var fmt = <?php echo wp_json_encode( __( '%d children — %s RWF / month', 'tangnest-robotics' ) ); ?>;
+			var fmtOne = <?php echo wp_json_encode( __( '1 child — %s RWF / month', 'tangnest-robotics' ) ); ?>;
+			var currentlyFmt = <?php echo wp_json_encode( __( ' (currently %s)', 'tangnest-robotics' ) ); ?>;
+			var negotiatedFmt = <?php echo wp_json_encode( __( ' (negotiated; standard %s)', 'tangnest-robotics' ) ); ?>;
+			var effectiveFmt = <?php echo wp_json_encode( __( 'Takes effect from the next invoice, %s.', 'tangnest-robotics' ) ); ?>;
+			var staleFmt = <?php echo wp_json_encode( __( 'This family has a negotiated rate of %1$s RWF agreed for %2$d children. They now have %3$d. Enter a new agreed amount, or clear the negotiated rate to use the standard price%4$s.', 'tangnest-robotics' ) ); ?>;
+			var noPriceFmt = <?php echo wp_json_encode( __( 'This package has no price set for %d children yet — add it on the Packages screen.', 'tangnest-robotics' ) ); ?>;
+
+			function numberFmt( n ) {
+				return Math.round( n ).toString().replace( /\B(?=(\d{3})+(?!\d))/g, ',' );
+			}
+
+			function tableLookup( detail, count ) {
+				if ( ! detail || count < 1 ) { return null; }
+				if ( 1 === count ) { return detail.price1; }
+				if ( 2 === count ) { return detail.price2; }
+				if ( 3 === count ) { return detail.price3; }
+				if ( null === detail.price3 || null === detail.priceAdd ) { return null; }
+				return detail.price3 + ( count - 3 ) * detail.priceAdd;
+			}
+
+			function filledChildRowCount() {
+				var count = 0;
+				body.querySelectorAll( 'tr' ).forEach( function( tr ) {
+					var inputs = tr.querySelectorAll( 'input' );
+					var first  = inputs[0] ? inputs[0].value.trim() : '';
+					var last   = inputs[1] ? inputs[1].value.trim() : '';
+					if ( '' !== first || '' !== last ) { count++; }
+				} );
+				return count;
+			}
+
+			function updateLivePrice() {
+				if ( ! livePriceEl ) { return; }
+
+				var detail = packageDetails[ packageSelect.value ];
+				var count  = existingActiveCount + filledChildRowCount();
+
+				if ( ! detail || count < 1 ) {
+					livePriceEl.textContent = '';
+					if ( midNoteEl ) { midNoteEl.style.display = 'none'; }
+					return;
+				}
+
+				var negotiatedChecked = document.getElementById( 'tr-negotiated-enabled' ).checked;
+				var standardPrice     = tableLookup( detail, count );
+				var line              = '';
+
+				if ( negotiatedChecked && null !== existingNegotiatedAmount && existingNegotiatedForCount === count ) {
+					line = ( 1 === count ? fmtOne.replace( '%s', numberFmt( existingNegotiatedAmount ) ) : fmt.replace( '%d', count ).replace( '%s', numberFmt( existingNegotiatedAmount ) ) )
+						+ ( null !== standardPrice ? negotiatedFmt.replace( '%s', numberFmt( standardPrice ) ) : '' );
+				} else if ( negotiatedChecked && null !== existingNegotiatedAmount && existingNegotiatedForCount !== count ) {
+					line = staleFmt
+						.replace( '%1$s', numberFmt( existingNegotiatedAmount ) )
+						.replace( '%2$d', existingNegotiatedForCount )
+						.replace( '%3$d', count )
+						.replace( '%4$s', null !== standardPrice ? ' of ' + numberFmt( standardPrice ) + ' RWF' : '' );
+				} else if ( null === standardPrice ) {
+					line = noPriceFmt.replace( '%d', count );
+				} else {
+					line = 1 === count ? fmtOne.replace( '%s', numberFmt( standardPrice ) ) : fmt.replace( '%d', count ).replace( '%s', numberFmt( standardPrice ) );
+					if ( null !== existingMonthlyAmount && Math.round( existingMonthlyAmount ) !== Math.round( standardPrice ) ) {
+						line += currentlyFmt.replace( '%s', numberFmt( existingMonthlyAmount ) );
+					}
+				}
+
+				if ( nextBillingLabel && null !== standardPrice ) {
+					line += ' ' + effectiveFmt.replace( '%s', nextBillingLabel );
+				}
+
+				livePriceEl.textContent = line;
+
+				if ( midNoteEl ) {
+					midNoteEl.style.display = ( programmeHasStarted && filledChildRowCount() > 0 ) ? '' : 'none';
+				}
+			}
 
 			var body     = document.getElementById( 'tr-new-children-body' );
 			var addBtn   = document.getElementById( 'tr-add-child' );
@@ -806,14 +1158,38 @@ class TR_Family_Edit {
 
 				body.appendChild( tr );
 
+				tr.querySelectorAll( 'input' ).forEach( function( input ) {
+					input.addEventListener( 'input', updateLivePrice );
+				} );
+
 				tr.querySelector( '.tr-remove-child' ).addEventListener( 'click', function() {
 					tr.parentNode.removeChild( tr );
+					updateLivePrice();
 				} );
+
+				updateLivePrice();
 			}
 
 			addBtn.addEventListener( 'click', function() { addChildRow(); } );
 
 			postedChildren.forEach( function( row ) { addChildRow( row ); } );
+
+			packageSelect.addEventListener( 'change', updateLivePrice );
+
+			var negotiatedCb     = document.getElementById( 'tr-negotiated-enabled' );
+			var negotiatedFields = document.getElementById( 'tr-negotiated-fields' );
+			var negotiatedAmountInput = document.getElementById( 'tr-negotiated-amount' );
+			if ( negotiatedCb ) {
+				negotiatedCb.addEventListener( 'change', function() {
+					negotiatedFields.style.display = negotiatedCb.checked ? '' : 'none';
+					updateLivePrice();
+				} );
+			}
+			if ( negotiatedAmountInput ) {
+				negotiatedAmountInput.addEventListener( 'input', updateLivePrice );
+			}
+
+			updateLivePrice();
 
 			var overrideCb = document.getElementById( 'tr-override-anchor' );
 			var billingInput = document.getElementById( 'tr-billing-day' );
@@ -839,6 +1215,51 @@ class TR_Family_Edit {
 		})();
 		</script>
 		<?php
+	}
+
+	/**
+	 * Reverse-chronological change history (v0.10.0 Task 7) — the most
+	 * recent 20 events shown directly, the rest behind a native <details>
+	 * disclosure so the admin never has to leave this screen to see the
+	 * full trail. Reads TR_Family_Events only; never writes.
+	 */
+	private static function render_history( int $family_id ): void {
+		$events = TR_Family_Events::get_by_family( $family_id );
+
+		if ( empty( $events ) ) {
+			echo '<p class="description">' . esc_html__( 'No history recorded yet.', 'tangnest-robotics' ) . '</p>';
+			return;
+		}
+
+		$visible = array_slice( $events, 0, 20 );
+		$rest    = array_slice( $events, 20 );
+
+		echo '<ul class="tr-family-history">';
+		foreach ( $visible as $event ) {
+			self::render_history_row( $event );
+		}
+		echo '</ul>';
+
+		if ( ! empty( $rest ) ) {
+			echo '<details><summary>' . esc_html( sprintf(
+				/* translators: %d: number of older events */
+				__( 'Show all (%d more)', 'tangnest-robotics' ),
+				count( $rest )
+			) ) . '</summary><ul class="tr-family-history">';
+			foreach ( $rest as $event ) {
+				self::render_history_row( $event );
+			}
+			echo '</ul></details>';
+		}
+	}
+
+	private static function render_history_row( object $event ): void {
+		printf(
+			'<li><span class="tr-family-history__date">%s</span> — %s — <span class="tr-family-history__actor">%s</span></li>',
+			esc_html( date_i18n( 'j M Y', strtotime( $event->created_at ) ) ),
+			esc_html( $event->summary ),
+			esc_html( TR_Family_Events::actor_label( $event ) )
+		);
 	}
 
 	private static function render_students_sublist( int $family_id ): void {

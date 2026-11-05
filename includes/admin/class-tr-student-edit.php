@@ -124,6 +124,28 @@ class TR_Student_Edit {
 			TR_Students::update( $student_id, $student_data );
 		} else {
 			$student_id = TR_Students::insert( $student_data );
+
+			// v0.10.0: a child added here (not via the Family screen's own
+			// inline Add child section) must recompute the family's
+			// billed amount too — this is the other route a family's
+			// active child count can change through. No-op when the
+			// family has no package yet (e.g. the "new family" branch
+			// above), same as every other recompute call site.
+			TR_Family_Events::record(
+				$family_id,
+				'child_added',
+				sprintf(
+					/* translators: %s: child's full name */
+					__( '%s added', 'tangnest-robotics' ),
+					trim( $first_name . ' ' . $last_name )
+				),
+				null,
+				null,
+				get_current_user_id()
+			);
+
+			TR_Families::recompute_and_save_amount( $family_id, get_current_user_id() );
+			TR_Families::flag_composition_change( $family_id );
 		}
 
 		if ( 'new' === $family_mode ) {

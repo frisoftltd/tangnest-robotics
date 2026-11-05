@@ -162,11 +162,15 @@ class TR_Students_Table extends WP_List_Table {
 	/**
 	 * Reconstructs the bits of a family row TR_Families::progress_label()
 	 * needs, from the columns already selected in prepare_items() — avoids
-	 * a second query per row just to call a method that only reads three
-	 * fields.
+	 * a second query per row just to call a method that only reads these
+	 * fields directly. 'id' is required too (v0.10.0): progress_label()
+	 * calls TR_Families::total_months( $family->id ), which re-fetches the
+	 * real row from the database itself rather than reading program dates
+	 * off this stub.
 	 */
 	private function family_progress_stub( object $item ): object {
 		return (object) [
+			'id'          => $item->family_id,
 			'status'      => $item->family_status,
 			'package_id'  => $item->package_id,
 			'months_paid' => $item->months_paid,

@@ -80,11 +80,17 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 				// package name and progress (v0.8.0) — siblings finish
 				// together, so this is computed once, not per child.
 				$family_package = ! empty( $family->package_id ) ? TR_Programs::get( (int) $family->package_id ) : null;
-				$package_months_total = $family_package ? (int) $family_package->duration_months : 0;
 
-				$family_percent = 0;
-				if ( $package_months_total > 0 ) {
-					$family_percent = min( 100, (int) round( ( (int) $family->months_paid / $package_months_total ) * 100 ) );
+				// v0.10.0: duration is per-family now, not read off the
+				// package — total_months() falls back to the package's own
+				// default only when the family has no programme dates of
+				// its own. NULL (no known total) just means no bar, not a
+				// 0% one.
+				$family_months_total = TR_Families::total_months( (int) $family->id );
+
+				$family_percent = null;
+				if ( null !== $family_months_total && $family_months_total > 0 ) {
+					$family_percent = min( 100, (int) round( ( (int) $family->months_paid / $family_months_total ) * 100 ) );
 				}
 				?>
 
@@ -95,9 +101,11 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 							<p class="tr-dashboard__program"><?php echo esc_html( $family_package->name ?? __( 'No package yet', 'tangnest-robotics' ) ); ?></p>
 							<?php if ( $family_package ) : ?>
 								<p class="tr-dashboard__progress-label"><?php echo esc_html( TR_Families::progress_label( $family ) ); ?></p>
-								<div class="tr-dashboard__progress-bar">
-									<div class="tr-dashboard__progress-fill" style="width: <?php echo esc_attr( $family_percent ); ?>%;"></div>
-								</div>
+								<?php if ( null !== $family_percent ) : ?>
+									<div class="tr-dashboard__progress-bar">
+										<div class="tr-dashboard__progress-fill" style="width: <?php echo esc_attr( $family_percent ); ?>%;"></div>
+									</div>
+								<?php endif; ?>
 							<?php endif; ?>
 							<p class="tr-dashboard__status tr-dashboard__status--<?php echo esc_attr( $student->status ); ?>"><?php echo esc_html( 'active' === $student->status ? __( 'Active', 'tangnest-robotics' ) : __( 'Inactive', 'tangnest-robotics' ) ); ?></p>
 						</div>

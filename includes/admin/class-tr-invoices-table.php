@@ -286,7 +286,7 @@ class TR_Invoices_Table extends WP_List_Table {
 				$range = TR_Invoices::period_range_short( $item );
 				return esc_html( $item->period ) . ( '' !== $range ? '<br><span class="tr-invoice-meta">' . esc_html( $range ) . '</span>' : '' );
 			case 'amount':
-				return esc_html( number_format( (float) $item->amount, 2 ) . ' ' . $item->currency );
+				return $this->format_amount( $item );
 			case 'due_date':
 				return esc_html( $item->due_date );
 			case 'paid_at':
@@ -296,6 +296,30 @@ class TR_Invoices_Table extends WP_List_Table {
 			default:
 				return '';
 		}
+	}
+
+	/**
+	 * An edited invoice (v0.10.0 Task 6) shows both figures — the original
+	 * struck through, the new one plain — and the required reason on
+	 * hover, so a row that reads 40,000 when the family rate is 65,000
+	 * explains itself without the admin having to go looking for why.
+	 */
+	private function format_amount( object $item ): string {
+		$current = esc_html( number_format( (float) $item->amount, 2 ) . ' ' . $item->currency );
+
+		if ( empty( $item->original_amount ) ) {
+			return $current;
+		}
+
+		$original = esc_html( number_format( (float) $item->original_amount, 2 ) . ' ' . $item->currency );
+		$reason   = esc_attr( $item->amount_edit_reason ?? '' );
+
+		return sprintf(
+			'<span class="tr-invoice-amount-edited" title="%s"><del>%s</del><br>%s</span>',
+			$reason,
+			$original,
+			$current
+		);
 	}
 
 	/**
@@ -408,6 +432,12 @@ class TR_Invoices_Table extends WP_List_Table {
 				'<a href="%s" target="_blank" rel="noopener">%s</a>',
 				esc_url( $whatsapp_url ),
 				esc_html__( 'Send reminder (WhatsApp)', 'tangnest-robotics' )
+			);
+
+			$actions['edit_amount'] = sprintf(
+				'<a href="%s">%s</a>',
+				esc_url( add_query_arg( [ 'page' => TR_Admin_Menu::PAGE_INVOICES, 'action' => 'edit_amount', 'id' => $item->id ], admin_url( 'admin.php' ) ) ),
+				esc_html__( 'Edit amount', 'tangnest-robotics' )
 			);
 
 			$actions['waive'] = sprintf(

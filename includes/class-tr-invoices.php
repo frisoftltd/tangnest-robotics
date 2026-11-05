@@ -376,6 +376,44 @@ class TR_Invoices {
 		return false !== $wpdb->query( $sql );
 	}
 
+	/**
+	 * A deliberate manual override on an unpaid invoice (v0.10.0 Task 6) —
+	 * a part-month credit or a goodwill adjustment the normal recalculation
+	 * rules have no path for. Always records what the amount was before
+	 * this edit in original_amount (overwritten on a second edit — this is
+	 * "the figure before the most recent edit", not a full history; the
+	 * family event log is what keeps every edit, not this column) and the
+	 * required reason, and clears every IremboPay reference so the next
+	 * Pay attempt creates a fresh invoice at the new amount instead of
+	 * reusing one priced for the old one — same reset
+	 * update_amount_and_reset_irembopay() already does after a package
+	 * change. The caller (TR_Invoice_Actions) is responsible for refusing
+	 * this on anything but a pending/overdue invoice; this method does not
+	 * re-check status, same as every other write primitive on this table.
+	 */
+	public static function edit_amount( int $id, float $new_amount, string $reason ): bool {
+		global $wpdb;
+
+		$invoice = self::get( $id );
+		if ( null === $invoice ) {
+			return false;
+		}
+
+		$sql = $wpdb->prepare(
+			"UPDATE " . self::table() . " SET amount = %s, original_amount = %s, amount_edit_reason = %s,
+			 irembopay_invoice_number = NULL, irembopay_transaction_id = NULL, irembopay_expires_at = NULL, updated_at = %s WHERE id = %d",
+			[
+				number_format( $new_amount, 2, '.', '' ),
+				number_format( (float) $invoice->amount, 2, '.', '' ),
+				sanitize_textarea_field( $reason ),
+				current_time( 'mysql' ),
+				$id,
+			]
+		);
+
+		return false !== $wpdb->query( $sql );
+	}
+
 	private static function stages_sent( ?string $csv ): array {
 		if ( empty( $csv ) ) {
 			return [];

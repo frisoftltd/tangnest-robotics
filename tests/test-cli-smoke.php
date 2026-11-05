@@ -127,6 +127,10 @@ class TR_Families {
 
 	public static function progress_label( object $family ): string { return 'Month 1 of 8'; }
 
+	// v0.10.0 — no fixture family carries a negotiated rate, so this
+	// never needs to be anything but false for this smoke test.
+	public static function is_negotiated_stale( object $family ): bool { return false; }
+
 	/**
 	 * Faithful copy of the real algorithm (per-family billing_day
 	 * projected forward from "today"), not a canned value — a stub that
@@ -184,6 +188,16 @@ class TR_Programs {
 	public static function get_list( array $args = [] ): array { return array_map( static fn( $p ) => (object) $p, array_values( self::$packages ) ); }
 
 	public static function count( array $args = [] ): int { return count( self::$packages ); }
+
+	// v0.10.0 — every fixture package is treated as fully priced for this
+	// smoke test; the price-table completeness logic itself is covered by
+	// the real TR_Programs unit behaviour, not re-tested here.
+	public static function missing_price_labels( object $package ): array { return []; }
+}
+
+class TR_Family_Events {
+	public static function get_by_family( int $family_id, int $limit = 0 ): array { return []; }
+	public static function actor_label( object $event ): string { return 'Tangnest'; }
 }
 
 class TR_Invoices {

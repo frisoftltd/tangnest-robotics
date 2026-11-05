@@ -99,6 +99,18 @@ class TR_Payment {
 		] );
 
 		TR_Families::increment_months_paid( $family_id );
+
+		TR_Family_Events::record(
+			$family_id,
+			'invoice_paid',
+			sprintf(
+				/* translators: %d: invoice ID */
+				__( 'Invoice #%d paid via IremboPay', 'tangnest-robotics' ),
+				$invoice_id
+			),
+			null,
+			(string) $invoice_id
+		);
 	}
 
 	private static function create_new( TR_IremboPay_API $api, object $invoice, object $family, WP_User $user ): array {

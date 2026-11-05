@@ -150,7 +150,7 @@ class TR_Families_Table extends WP_List_Table {
 				$package = TR_Programs::get( (int) $item->package_id );
 				return esc_html( $package->name ?? __( '(deleted)', 'tangnest-robotics' ) );
 			case 'monthly_amount':
-				return esc_html( $item->monthly_amount ) . ' RWF';
+				return $this->format_monthly_amount( $item );
 			case 'progress':
 				return esc_html( TR_Families::progress_label( $item ) );
 			case 'billing_day':
@@ -169,6 +169,26 @@ class TR_Families_Table extends WP_List_Table {
 			default:
 				return '';
 		}
+	}
+
+	/**
+	 * Negotiated badge (v0.10.0 Task 3) — and a warning flag in place of
+	 * it the moment that negotiated rate goes stale, since the figure
+	 * shown then is whatever was last written, not necessarily what the
+	 * family would actually be billed next.
+	 */
+	private function format_monthly_amount( object $item ): string {
+		$amount = esc_html( $item->monthly_amount ) . ' RWF';
+
+		if ( null === $item->negotiated_amount ) {
+			return $amount;
+		}
+
+		if ( TR_Families::is_negotiated_stale( $item ) ) {
+			return $amount . ' <span class="tr-warning-flag">' . esc_html__( '⚠ Negotiated rate needs review', 'tangnest-robotics' ) . '</span>';
+		}
+
+		return $amount . ' <span class="tr-badge tr-badge--negotiated">' . esc_html__( 'Negotiated', 'tangnest-robotics' ) . '</span>';
 	}
 
 	public function column_parent_name( $item ): string {

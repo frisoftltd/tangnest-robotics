@@ -29,6 +29,11 @@ class TR_DB {
 		return $wpdb->prefix . 'tr_invoices';
 	}
 
+	public static function table_family_events(): string {
+		global $wpdb;
+		return $wpdb->prefix . 'tr_family_events';
+	}
+
 	public static function maybe_upgrade(): void {
 		self::cleanup_legacy_access_token_cache();
 
@@ -70,6 +75,13 @@ class TR_DB {
 		// before this column existed.
 		if ( $previous_version && version_compare( $previous_version, '0.9.3', '<' ) ) {
 			self::migrate_backfill_course_and_child_count();
+		}
+
+		// A brand new install has no default_monthly_fee to copy anywhere —
+		// every package starts with its price-by-child-count columns empty,
+		// filled in by hand on the Packages screen.
+		if ( $previous_version && version_compare( $previous_version, '0.10.0', '<' ) ) {
+			self::migrate_package_prices_to_price_table();
 		}
 
 		update_option( self::DB_VERSION_OPTION, TANGNEST_ROBOTICS_DB_VERSION );
@@ -244,6 +256,92 @@ class TR_DB {
 	}
 
 	/**
+	 * v0.10.0 moves pricing off the single default_monthly_fee figure onto
+	 * a price-by-child-count table (price_1_child / price_2_children /
+	 * price_3_children / price_additional_child — see
+	 * TR_Families::calculate_amount()). Every package created before this
+	 * ran has exactly one real price, default_monthly_fee, and — for most —
+	 * a child_count backfilled by the v0.9.3 migration above; this copies
+	 * that one price into the column matching its own child_count and
+	 * leaves the other three columns NULL for an admin to fill in by hand.
+	 * It never guesses a price a package doesn't already hold, and it
+	 * never writes a second time into a column that already has one (safe
+	 * to re-run). A package whose child_count is still NULL or 0 — the
+	 * v0.9.3 name parser failed on it — is inferred as 1 child (every one
+	 * on the live site is, in fact, a single-child package, confirmed by
+	 * hand against the real data, not guessed per row) and logged
+	 * individually by ID and name so that can be checked by eye.
+	 *
+	 * Deliberately never touches wp_tr_families — monthly_amount on every
+	 * existing family is a frozen snapshot (v0.8.0) and this migration
+	 * must never move it, whether or not its package was itself migrated.
+	 * Runs once, as part of the version-gated upgrade above.
+	 */
+	private static function migrate_package_prices_to_price_table(): void {
+		global $wpdb;
+		$programs_table = self::table_programs();
+
+		$rows = $wpdb->get_results( "SELECT id, name, child_count, default_monthly_fee, price_1_child, price_2_children, price_3_children FROM {$programs_table}" );
+
+		$price_column_by_count = [ 1 => 'price_1_child', 2 => 'price_2_children', 3 => 'price_3_children' ];
+
+		$migrated = 0;
+		$inferred = [];
+		$skipped  = 0;
+
+		foreach ( $rows as $row ) {
+			$child_count = (int) $row->child_count;
+
+			if ( $child_count < 1 || $child_count > 3 ) {
+				$child_count = 1;
+				$inferred[]  = [ 'id' => (int) $row->id, 'name' => $row->name ];
+			}
+
+			$column = $price_column_by_count[ $child_count ];
+
+			if ( null !== $row->$column ) {
+				// Already has a price in that slot (safe to re-run) — never
+				// overwrite a value that might by now differ from
+				// default_monthly_fee.
+				$skipped++;
+				continue;
+			}
+
+			$wpdb->update(
+				$programs_table,
+				[ 'child_count' => $child_count, $column => $row->default_monthly_fee ],
+				[ 'id' => $row->id ],
+				[ '%d', '%s' ],
+				[ '%d' ]
+			);
+			$migrated++;
+		}
+
+		foreach ( $inferred as $package ) {
+			TR_Logger::info( 'v0.10.0 migration: child count inferred as 1', [
+				'package_id' => $package['id'],
+				'name'       => $package['name'],
+			] );
+		}
+
+		$incomplete = [];
+		foreach ( TR_Programs::get_list( [ 'status' => 'active', 'per_page' => 10000 ] ) as $package ) {
+			$missing = TR_Programs::missing_price_labels( $package );
+			if ( ! empty( $missing ) ) {
+				$incomplete[] = [ 'id' => (int) $package->id, 'name' => $package->name, 'missing' => $missing ];
+			}
+		}
+
+		TR_Logger::info( 'v0.10.0 migration: package prices copied to price table', [
+			'migrated_count'   => $migrated,
+			'inferred_count'   => count( $inferred ),
+			'already_set_count' => $skipped,
+			'incomplete_active_packages' => count( $incomplete ),
+			'incomplete_detail' => $incomplete,
+		] );
+	}
+
+	/**
 	 * v0.6.0 makes monthly_amount a calculated figure by default. Every
 	 * family that existed before this ran had its amount hand-typed under
 	 * the old model — those figures must not be silently overwritten by a
@@ -305,6 +403,9 @@ class TR_DB {
 			billing_day              TINYINT(3)   UNSIGNED NOT NULL DEFAULT 1,
 			program_start_date       DATE         DEFAULT NULL,
 			program_end_date         DATE         DEFAULT NULL,
+			negotiated_amount            DECIMAL(12,2) DEFAULT NULL,
+			negotiated_for_child_count   TINYINT(3)   UNSIGNED DEFAULT NULL,
+			negotiated_note               TEXT         DEFAULT NULL,
 			status                   VARCHAR(20)  NOT NULL DEFAULT 'active',
 			notes                    TEXT         DEFAULT NULL,
 			access_token_hash        CHAR(64)     DEFAULT NULL,
@@ -355,6 +456,10 @@ class TR_DB {
 			irembopay_product_code VARCHAR(60)  DEFAULT NULL,
 			course                 VARCHAR(150) DEFAULT NULL,
 			child_count            TINYINT(3)   UNSIGNED DEFAULT NULL,
+			price_1_child          DECIMAL(12,2) DEFAULT NULL,
+			price_2_children       DECIMAL(12,2) DEFAULT NULL,
+			price_3_children       DECIMAL(12,2) DEFAULT NULL,
+			price_additional_child DECIMAL(12,2) DEFAULT NULL,
 			start_date             DATE         DEFAULT NULL,
 			notes                  TEXT         DEFAULT NULL,
 			status                 VARCHAR(20)  NOT NULL DEFAULT 'active',
@@ -401,6 +506,8 @@ class TR_DB {
 			irembopay_invoice_number  VARCHAR(120) DEFAULT NULL,
 			irembopay_transaction_id  VARCHAR(120) DEFAULT NULL,
 			irembopay_expires_at      DATETIME     DEFAULT NULL,
+			original_amount           DECIMAL(12,2) DEFAULT NULL,
+			amount_edit_reason        TEXT         DEFAULT NULL,
 			last_reminder_sent        DATETIME     DEFAULT NULL,
 			reminder_count            TINYINT(3)   UNSIGNED NOT NULL DEFAULT 0,
 			reminder_stages_sent      VARCHAR(100) DEFAULT NULL,
@@ -411,6 +518,21 @@ class TR_DB {
 			KEY status (status),
 			KEY due_date (due_date),
 			KEY irembopay_invoice_number (irembopay_invoice_number)
+		) {$charset};" );
+
+		$family_events = self::table_family_events();
+		dbDelta( "CREATE TABLE {$family_events} (
+			id           BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			family_id    BIGINT(20) UNSIGNED NOT NULL,
+			event_type   VARCHAR(40)  NOT NULL,
+			summary      VARCHAR(255) NOT NULL,
+			old_value    VARCHAR(100) DEFAULT NULL,
+			new_value    VARCHAR(100) DEFAULT NULL,
+			recorded_by  BIGINT(20) UNSIGNED DEFAULT NULL,
+			created_at   DATETIME     NOT NULL,
+			PRIMARY KEY  (id),
+			KEY family_id (family_id),
+			KEY created_at (created_at)
 		) {$charset};" );
 	}
 }

@@ -36,6 +36,8 @@ function current_time( $type ) {
 	return 'mysql' === $type ? TEST_TODAY . ' 10:00:00' : strtotime( TEST_TODAY );
 }
 
+function __( $text, $domain = 'default' ) { return $text; }
+
 // --- Fixture data: 9 families, mirroring the real "nine families all
 // billing on the 26th" situation this feature exists for. ---
 
@@ -96,6 +98,42 @@ class TR_Families {
 
 	public static function is_date_set( $value ): bool {
 		return null !== $value && '' !== $value && '0000-00-00' !== $value;
+	}
+
+	public static function get( int $id ): ?object {
+		foreach ( $GLOBALS['TEST_FAMILIES'] as $family ) {
+			if ( (int) $family->id === $id ) {
+				return $family;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * v0.10.0 — not exercised by this fixture set (no test family has
+	 * both program_start_date and program_end_date set), so this always
+	 * falls through to the package's duration_months, same as the
+	 * pre-v0.10.0 behaviour build_student_snapshot() relied on.
+	 */
+	public static function total_months( int $family_id ): ?int {
+		$family = self::get( $family_id );
+		if ( null === $family ) {
+			return null;
+		}
+
+		if ( self::is_date_set( $family->program_start_date ?? null ) && self::is_date_set( $family->program_end_date ?? null ) ) {
+			return null;
+		}
+
+		$package = TR_Programs::get( (int) ( $family->package_id ?? 0 ) );
+		return $package ? (int) $package->duration_months : null;
+	}
+}
+
+class TR_Family_Events {
+	public static function record( int $family_id, string $event_type, string $summary, ?string $old_value = null, ?string $new_value = null, ?int $recorded_by = null ): int {
+		$GLOBALS['CALLS']['family_events'][] = [ $family_id, $event_type, $summary ];
+		return 1;
 	}
 }
 

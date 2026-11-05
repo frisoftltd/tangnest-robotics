@@ -257,6 +257,19 @@ class TR_Invoice_Generator {
 				'amount'     => number_format( $entry['amount'], 2, '.', '' ),
 			] );
 
+			TR_Family_Events::record(
+				$family_id,
+				'invoice_created',
+				sprintf(
+					/* translators: 1: billing period, 2: amount */
+					__( 'Invoice created for %1$s (%2$s RWF)', 'tangnest-robotics' ),
+					$entry['period'],
+					number_format( $entry['amount'], 0 )
+				),
+				null,
+				(string) $invoice_id
+			);
+
 			TR_Notifications::send_invoice_issued_email( $family_id, $invoice_id );
 
 			$created[] = array_merge( $entry, [ 'invoice_id' => $invoice_id ] );
@@ -322,8 +335,13 @@ class TR_Invoice_Generator {
 
 		$package      = ! empty( $family->package_id ) ? TR_Programs::get( (int) $family->package_id ) : null;
 		$package_name = $package->name ?? '';
-		$months_total = $package ? max( (int) $package->duration_months, 1 ) : 1;
-		$month_number = min( (int) $family->months_paid + 1, $months_total );
+
+		// v0.10.0: the family's own total (programme dates, falling back
+		// to the package's default duration) — NULL when neither is
+		// known; the email template already hides the "Month X of Y" line
+		// whenever months_total is empty, so this never prints a guess.
+		$months_total = $package ? TR_Families::total_months( (int) $family->id ) : null;
+		$month_number = null !== $months_total ? min( (int) $family->months_paid + 1, max( $months_total, 1 ) ) : (int) $family->months_paid + 1;
 
 		$snapshot = [];
 		foreach ( $active_students as $student ) {

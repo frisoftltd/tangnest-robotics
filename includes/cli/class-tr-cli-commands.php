@@ -54,7 +54,8 @@ class TR_CLI_Command {
 		$today_str        = current_time( 'Y-m-d' );
 		$billability      = self::billability_by_family( $active_families, $today_str );
 		$cannot_be_billed = self::cannot_be_billed_rows( $active_families, $billability );
-		$package_mismatch = self::package_mismatch_rows( $active_families );
+		$incomplete_packages    = self::incomplete_package_rows();
+		$negotiated_needs_review = self::negotiated_review_rows( $active_families );
 
 		$children_active = TR_Students::count( [ 'status' => 'active' ] );
 
@@ -96,20 +97,22 @@ class TR_CLI_Command {
 				1 === count( $cannot_be_billed ) ? 'y' : 'ies'
 			);
 		}
-		if ( ! empty( $package_mismatch ) ) {
+		if ( ! empty( $incomplete_packages ) ) {
 			$issues[] = sprintf(
-				'%d famil%s on a package whose size doesn\'t match active children — see "Package mismatch" below',
-				count( $package_mismatch ),
-				1 === count( $package_mismatch ) ? 'y is' : 'ies are'
+				'%d active package%s missing part of its price table — see "Packages with incomplete pricing" below',
+				count( $incomplete_packages ),
+				1 === count( $incomplete_packages ) ? ' is' : 's are'
+			);
+		}
+		if ( ! empty( $negotiated_needs_review ) ) {
+			$issues[] = sprintf(
+				'%d negotiated rate%s stale — see "Negotiated rates needing review" below',
+				count( $negotiated_needs_review ),
+				1 === count( $negotiated_needs_review ) ? ' is' : 's are'
 			);
 		}
 		foreach ( $packages_without_code as $p ) {
 			$issues[] = sprintf( 'package "%s" (id %d) has no product code and no site-wide default is set', $p->name, (int) $p->id );
-		}
-		foreach ( $active_packages as $p ) {
-			if ( empty( $p->course ) || empty( $p->child_count ) ) {
-				$issues[] = sprintf( 'package "%s" (id %d) is missing course and/or child count — see the v0.9.3 migration log, or edit it directly', $p->name, (int) $p->id );
-			}
 		}
 		if ( false === $cron_next_ts ) {
 			$issues[] = sprintf( 'cron event "%s" is not scheduled', TR_Cron::HOOK );
@@ -143,7 +146,8 @@ class TR_CLI_Command {
 			'debug_log'                   => $debug_on,
 			'issues'                      => $issues,
 			'cannot_be_billed'            => $cannot_be_billed,
-			'package_mismatch'            => $package_mismatch,
+			'incomplete_packages'         => $incomplete_packages,
+			'negotiated_needs_review'     => $negotiated_needs_review,
 		];
 
 		if ( in_array( $format, [ 'json', 'yaml' ], true ) ) {
@@ -154,7 +158,7 @@ class TR_CLI_Command {
 		if ( in_array( $format, [ 'table', 'csv' ], true ) ) {
 			$rows = [];
 			foreach ( $data as $key => $value ) {
-				if ( in_array( $key, [ 'issues', 'cannot_be_billed', 'package_mismatch' ], true ) ) {
+				if ( in_array( $key, [ 'issues', 'cannot_be_billed', 'incomplete_packages', 'negotiated_needs_review' ], true ) ) {
 					continue;
 				}
 				$rows[] = [ 'metric' => $key, 'value' => self::scalar_for_display( $value ) ];
@@ -169,9 +173,14 @@ class TR_CLI_Command {
 				\WP_CLI\Utils\format_items( $format, $data['cannot_be_billed'], [ 'family_id', 'parent_name', 'code', 'reason' ] );
 			}
 
-			if ( ! empty( $data['package_mismatch'] ) ) {
+			if ( ! empty( $data['incomplete_packages'] ) ) {
 				WP_CLI::line( '' );
-				\WP_CLI\Utils\format_items( $format, $data['package_mismatch'], [ 'family_id', 'parent_name', 'active_children', 'package_child_count', 'package_name' ] );
+				\WP_CLI\Utils\format_items( $format, $data['incomplete_packages'], [ 'package_id', 'name', 'missing' ] );
+			}
+
+			if ( ! empty( $data['negotiated_needs_review'] ) ) {
+				WP_CLI::line( '' );
+				\WP_CLI\Utils\format_items( $format, $data['negotiated_needs_review'], [ 'family_id', 'parent_name', 'reason' ] );
 			}
 			return;
 		}
@@ -313,6 +322,13 @@ class TR_CLI_Command {
 					'paid_at'  => $inv->paid_at ? substr( $inv->paid_at, 0, 10 ) : null,
 				];
 			}, $invoices ),
+			'history' => array_map( static function ( $event ) {
+				return [
+					'date'    => substr( $event->created_at, 0, 10 ),
+					'summary' => $event->summary,
+					'by'      => TR_Family_Events::actor_label( $event ),
+				];
+			}, TR_Family_Events::get_by_family( $id ) ),
 		];
 
 		$format = $assoc_args['format'] ?? '';
@@ -324,7 +340,7 @@ class TR_CLI_Command {
 
 		if ( in_array( $format, [ 'table', 'csv' ], true ) ) {
 			$summary = $data;
-			unset( $summary['children'], $summary['invoices'] );
+			unset( $summary['children'], $summary['invoices'], $summary['history'] );
 			$row = array_map( [ __CLASS__, 'scalar_for_display' ], $summary );
 			\WP_CLI\Utils\format_items( $format, [ $row ], array_keys( $row ) );
 
@@ -333,6 +349,9 @@ class TR_CLI_Command {
 
 			WP_CLI::line( '' );
 			\WP_CLI\Utils\format_items( $format, $data['invoices'], [ 'id', 'period', 'status', 'amount', 'currency', 'due_date', 'paid_at' ] );
+
+			WP_CLI::line( '' );
+			\WP_CLI\Utils\format_items( $format, $data['history'], [ 'date', 'summary', 'by' ] );
 			return;
 		}
 
@@ -821,38 +840,54 @@ class TR_CLI_Command {
 	}
 
 	/**
-	 * An active family whose active child count no longer matches its
-	 * package's child_count (v0.9.3) — e.g. a child deactivated without the
-	 * package being switched to match. Packages with no child_count set yet
-	 * are skipped here, not double-counted — they're already flagged
-	 * separately as "needs review" in the generic $issues list above.
+	 * Every active package missing part of its price-by-child-count table
+	 * (v0.10.0) — a family needing the missing count can't be saved until
+	 * an admin fills it in on the Packages screen. Superseded v0.9.3's
+	 * package-mismatch check, which assumed a package meant one fixed
+	 * child count; under the price-table model a package legitimately
+	 * covers any count, so that check no longer applies.
 	 */
-	private static function package_mismatch_rows( array $active_families ): array {
+	private static function incomplete_package_rows(): array {
+		$rows = [];
+
+		foreach ( TR_Programs::get_list( [ 'status' => 'active', 'per_page' => 10000 ] ) as $package ) {
+			$missing = TR_Programs::missing_price_labels( $package );
+			if ( empty( $missing ) ) {
+				continue;
+			}
+
+			$rows[] = [
+				'package_id' => (int) $package->id,
+				'name'       => $package->name,
+				'missing'    => implode( ', ', $missing ),
+			];
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Every active family whose negotiated rate (v0.10.0) no longer
+	 * matches its active child count — TR_Families::calculate_amount()
+	 * refuses to apply it and refuses to silently fall back to the table,
+	 * so the figure currently on the family's monthly_amount is whatever
+	 * was last actually written, not necessarily what it would bill next.
+	 */
+	private static function negotiated_review_rows( array $active_families ): array {
 		$rows = [];
 
 		foreach ( $active_families as $family ) {
-			if ( empty( $family->package_id ) ) {
+			if ( ! TR_Families::is_negotiated_stale( $family ) ) {
 				continue;
 			}
 
-			$package = TR_Programs::get( (int) $family->package_id );
-			if ( null === $package || empty( $package->child_count ) ) {
-				continue;
-			}
-
-			$active_children = TR_Students::count( [ 'family_id' => (int) $family->id, 'status' => 'active' ] );
-			if ( $active_children === (int) $package->child_count ) {
-				continue;
-			}
-
-			$user = get_userdata( (int) $family->parent_user_id );
+			$user  = get_userdata( (int) $family->parent_user_id );
+			$issue = TR_Families::pricing_issue( $family );
 
 			$rows[] = [
-				'family_id'           => (int) $family->id,
-				'parent_name'         => $user ? $user->display_name : '(no WordPress user)',
-				'active_children'     => $active_children,
-				'package_child_count' => (int) $package->child_count,
-				'package_name'        => $package->name,
+				'family_id'   => (int) $family->id,
+				'parent_name' => $user ? $user->display_name : '(no WordPress user)',
+				'reason'      => null !== $issue ? TR_Families::pricing_issue_message( $issue ) : '',
 			];
 		}
 
@@ -970,21 +1005,25 @@ class TR_CLI_Command {
 
 		WP_CLI::line( '' );
 
-		if ( empty( $data['package_mismatch'] ) ) {
-			WP_CLI::line( 'Package mismatch: none.' );
+		if ( empty( $data['incomplete_packages'] ) ) {
+			WP_CLI::line( 'Packages with incomplete pricing: none.' );
+		} else {
+			WP_CLI::line( sprintf( 'Packages with incomplete pricing (%d)', count( $data['incomplete_packages'] ) ) );
+			foreach ( $data['incomplete_packages'] as $row ) {
+				WP_CLI::line( sprintf( '  #%d  %s  missing %s', $row['package_id'], $row['name'], $row['missing'] ) );
+			}
+		}
+
+		WP_CLI::line( '' );
+
+		if ( empty( $data['negotiated_needs_review'] ) ) {
+			WP_CLI::line( 'Negotiated rates needing review: none.' );
 			return;
 		}
 
-		WP_CLI::line( sprintf( 'Package mismatch (%d)', count( $data['package_mismatch'] ) ) );
-		foreach ( $data['package_mismatch'] as $row ) {
-			WP_CLI::line( sprintf(
-				'  #%d  %s  %d active child(ren) on "%s" (sized for %d)',
-				$row['family_id'],
-				$row['parent_name'],
-				$row['active_children'],
-				$row['package_name'],
-				$row['package_child_count']
-			) );
+		WP_CLI::line( sprintf( 'Negotiated rates needing review (%d)', count( $data['negotiated_needs_review'] ) ) );
+		foreach ( $data['negotiated_needs_review'] as $row ) {
+			WP_CLI::line( sprintf( '  #%d  %s  %s', $row['family_id'], $row['parent_name'], $row['reason'] ) );
 		}
 	}
 
@@ -1015,20 +1054,30 @@ class TR_CLI_Command {
 		WP_CLI::line( sprintf( 'Invoices (%d)', count( $data['invoices'] ) ) );
 		if ( empty( $data['invoices'] ) ) {
 			WP_CLI::line( '  (none)' );
+		} else {
+			foreach ( $data['invoices'] as $invoice ) {
+				WP_CLI::line( sprintf(
+					'  #%d  %s  %-10s %s %s  due %s%s',
+					$invoice['id'],
+					$invoice['period'],
+					$invoice['status'],
+					$invoice['amount'],
+					$invoice['currency'],
+					$invoice['due_date'],
+					$invoice['paid_at'] ? '  paid ' . $invoice['paid_at'] : ''
+				) );
+			}
+		}
+		WP_CLI::line( '' );
+
+		WP_CLI::line( sprintf( 'History (%d)', count( $data['history'] ) ) );
+		if ( empty( $data['history'] ) ) {
+			WP_CLI::line( '  (none)' );
 			return;
 		}
 
-		foreach ( $data['invoices'] as $invoice ) {
-			WP_CLI::line( sprintf(
-				'  #%d  %s  %-10s %s %s  due %s%s',
-				$invoice['id'],
-				$invoice['period'],
-				$invoice['status'],
-				$invoice['amount'],
-				$invoice['currency'],
-				$invoice['due_date'],
-				$invoice['paid_at'] ? '  paid ' . $invoice['paid_at'] : ''
-			) );
+		foreach ( $data['history'] as $event ) {
+			WP_CLI::line( sprintf( '  %s  %s — %s', $event['date'], $event['summary'], $event['by'] ) );
 		}
 	}
 

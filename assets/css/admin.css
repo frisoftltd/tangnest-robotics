@@ -102,6 +102,17 @@
 	color: #646970;
 }
 
+.tr-badge--negotiated {
+	background: #e7e3fb;
+	color: #4b3ba3;
+	text-transform: none;
+}
+
+.tr-invoice-amount-edited del {
+	color: #646970;
+	text-decoration: line-through;
+}
+
 /*
  * Row actions on the Families and Invoices screens are the primary
  * interaction, not a hover-revealed secondary convenience — WP core hides

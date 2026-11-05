@@ -31,11 +31,17 @@ class TR_Packages_Page {
 			$errors[] = __( 'Package name is required.', 'tangnest-robotics' );
 		}
 
-		$duration_months = isset( $_POST['duration_months'] ) ? absint( $_POST['duration_months'] ) : 0;
-		if ( $duration_months < 1 || $duration_months > 36 ) {
-			$errors[] = __( 'Duration must be between 1 and 36 months.', 'tangnest-robotics' );
+		// v0.10.0: duration moves to the family and is now only a default
+		// for a new one — an active package no longer requires it. Blank
+		// means "no default", not zero months.
+		$duration_raw    = isset( $_POST['duration_months'] ) ? trim( wp_unslash( $_POST['duration_months'] ) ) : '';
+		$duration_months = '' !== $duration_raw ? absint( $duration_raw ) : 0;
+		if ( $duration_months > 36 ) {
+			$errors[] = __( 'Duration must be 36 months or fewer.', 'tangnest-robotics' );
 		}
 
+		// Legacy (v0.10.0) — no longer read for billing, kept only so
+		// existing data isn't lost. Never required.
 		$default_fee = isset( $_POST['default_monthly_fee'] ) ? (float) wp_unslash( $_POST['default_monthly_fee'] ) : 0.0;
 		if ( $default_fee < 0 ) {
 			$errors[] = __( 'Monthly amount cannot be negative.', 'tangnest-robotics' );
@@ -48,22 +54,28 @@ class TR_Packages_Page {
 			$errors[] = __( 'IremboPay product code must look like PC- followed by letters/numbers.', 'tangnest-robotics' );
 		}
 
+		// course/child_count are v0.10.0 labels only (no longer used to
+		// match a package automatically) — neither is required any more.
 		$course      = isset( $_POST['course'] ) ? sanitize_text_field( wp_unslash( $_POST['course'] ) ) : '';
 		$child_count = isset( $_POST['child_count'] ) ? absint( $_POST['child_count'] ) : 0;
 
-		if ( 'active' === $status ) {
-			if ( $default_fee <= 0 ) {
-				$errors[] = __( 'Monthly amount is required for an active package — this is what a family on it is billed.', 'tangnest-robotics' );
+		$price_fields = [];
+		foreach ( [ 'price_1_child', 'price_2_children', 'price_3_children', 'price_additional_child' ] as $field ) {
+			$raw = isset( $_POST[ $field ] ) ? trim( wp_unslash( $_POST[ $field ] ) ) : '';
+			if ( '' === $raw ) {
+				$price_fields[ $field ] = null;
+				continue;
 			}
-			if ( '' === $product_code ) {
-				$errors[] = __( 'A product code is required for an active package — without one, families on it cannot pay online.', 'tangnest-robotics' );
+			if ( ! is_numeric( $raw ) || (float) $raw < 0 ) {
+				$errors[] = __( 'Prices must be blank or a non-negative number.', 'tangnest-robotics' );
+				$price_fields[ $field ] = null;
+				continue;
 			}
-			if ( '' === $course ) {
-				$errors[] = __( 'Course is required for an active package — it is used to match a family to the right package automatically.', 'tangnest-robotics' );
-			}
-			if ( $child_count < 1 || $child_count > 3 ) {
-				$errors[] = __( 'Number of children is required for an active package and must be 1, 2 or 3.', 'tangnest-robotics' );
-			}
+			$price_fields[ $field ] = (float) $raw;
+		}
+
+		if ( 'active' === $status && '' === $product_code ) {
+			$errors[] = __( 'A product code is required for an active package — without one, families on it cannot pay online.', 'tangnest-robotics' );
 		}
 
 		$start_date = '';
@@ -87,7 +99,7 @@ class TR_Packages_Page {
 			exit;
 		}
 
-		$data = [
+		$data = array_merge( [
 			'name'                   => $name,
 			'duration_months'        => $duration_months,
 			'default_monthly_fee'    => $default_fee,
@@ -97,7 +109,7 @@ class TR_Packages_Page {
 			'start_date'             => $start_date,
 			'notes'                  => $notes,
 			'status'                 => $status,
-		];
+		], $price_fields );
 
 		if ( $id > 0 ) {
 			TR_Programs::update( $id, $data );
@@ -148,6 +160,10 @@ class TR_Packages_Page {
 					'irembopay_product_code' => $package->irembopay_product_code,
 					'course'                 => $package->course,
 					'child_count'            => $package->child_count,
+					'price_1_child'          => $package->price_1_child,
+					'price_2_children'       => $package->price_2_children,
+					'price_3_children'       => $package->price_3_children,
+					'price_additional_child' => $package->price_additional_child,
 					'start_date'             => $package->start_date,
 					'notes'                  => $package->notes,
 					'status'                 => 'inactive',
@@ -212,6 +228,10 @@ class TR_Packages_Page {
 		$edit_id = isset( $_GET['edit'] ) ? absint( $_GET['edit'] ) : 0;
 		$program = $edit_id > 0 ? TR_Programs::get( $edit_id ) : null;
 
+		// A brand new package suggests the common 8-month length; an
+		// existing one with no duration set shows blank, not a false 0.
+		$duration_display = $program ? ( (int) $program->duration_months > 0 ? (int) $program->duration_months : '' ) : 8;
+
 		$errors = get_transient( self::error_key() );
 		if ( $errors ) {
 			delete_transient( self::error_key() );
@@ -245,11 +265,11 @@ class TR_Packages_Page {
 						<th><label for="tr-course"><?php esc_html_e( 'Course', 'tangnest-robotics' ); ?></label></th>
 						<td>
 							<input type="text" id="tr-course" name="course" class="regular-text" value="<?php echo esc_attr( $program->course ?? '' ); ?>">
-							<p class="description"><?php esc_html_e( 'Required for an active package. Used to match a family to the right package automatically when its child count changes.', 'tangnest-robotics' ); ?></p>
+							<p class="description"><?php esc_html_e( 'A label only — grouping for your own reference. No longer used to match a family to a package automatically.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><label for="tr-child-count"><?php esc_html_e( 'Number of children', 'tangnest-robotics' ); ?></label></th>
+						<th><label for="tr-child-count"><?php esc_html_e( 'Typical number of children', 'tangnest-robotics' ); ?></label></th>
 						<td>
 							<select id="tr-child-count" name="child_count">
 								<option value=""><?php esc_html_e( '— Select —', 'tangnest-robotics' ); ?></option>
@@ -257,26 +277,53 @@ class TR_Packages_Page {
 									<option value="<?php echo esc_attr( $n ); ?>" <?php selected( (int) ( $program->child_count ?? 0 ), $n ); ?>><?php echo esc_html( $n ); ?></option>
 								<?php endforeach; ?>
 							</select>
-							<p class="description"><?php esc_html_e( 'Required for an active package.', 'tangnest-robotics' ); ?></p>
+							<p class="description"><?php esc_html_e( 'A label only — this package now carries a full price table below and covers any number of children.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
 						<th><label for="tr-product-code"><?php esc_html_e( 'IremboPay product code', 'tangnest-robotics' ); ?></label></th>
 						<td>
 							<input type="text" id="tr-product-code" name="irembopay_product_code" class="regular-text" placeholder="PC-XXXXXXXX" required value="<?php echo esc_attr( $program->irembopay_product_code ?? '' ); ?>">
-							<p class="description"><?php esc_html_e( 'From the IremboPay merchant dashboard. Required for an active package.', 'tangnest-robotics' ); ?></p>
+							<p class="description"><?php esc_html_e( 'From the IremboPay merchant dashboard. Required for an active package — IremboPay accepts any amount against a valid code (confirmed v0.9.4), but still needs the code itself.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><label for="tr-fee"><?php esc_html_e( 'Monthly amount (RWF)', 'tangnest-robotics' ); ?></label></th>
+						<th><?php esc_html_e( 'Monthly price by number of children', 'tangnest-robotics' ); ?></th>
 						<td>
-							<input type="number" id="tr-fee" name="default_monthly_fee" step="0.01" min="0" required value="<?php echo esc_attr( $program->default_monthly_fee ?? '0.00' ); ?>">
-							<p class="description"><?php esc_html_e( 'The real price — this is what a family on this package is billed. Required for an active package.', 'tangnest-robotics' ); ?></p>
+							<table class="form-table" role="presentation" style="margin:0;">
+								<tr>
+									<th style="padding-left:0;"><label for="tr-price-1"><?php esc_html_e( '1 child (RWF)', 'tangnest-robotics' ); ?></label></th>
+									<td><input type="number" id="tr-price-1" name="price_1_child" step="0.01" min="0" value="<?php echo esc_attr( $program->price_1_child ?? '' ); ?>"></td>
+								</tr>
+								<tr>
+									<th style="padding-left:0;"><label for="tr-price-2"><?php esc_html_e( '2 children (RWF)', 'tangnest-robotics' ); ?></label></th>
+									<td><input type="number" id="tr-price-2" name="price_2_children" step="0.01" min="0" value="<?php echo esc_attr( $program->price_2_children ?? '' ); ?>"></td>
+								</tr>
+								<tr>
+									<th style="padding-left:0;"><label for="tr-price-3"><?php esc_html_e( '3 children (RWF)', 'tangnest-robotics' ); ?></label></th>
+									<td><input type="number" id="tr-price-3" name="price_3_children" step="0.01" min="0" value="<?php echo esc_attr( $program->price_3_children ?? '' ); ?>"></td>
+								</tr>
+								<tr>
+									<th style="padding-left:0;"><label for="tr-price-4"><?php esc_html_e( 'Each additional child (RWF)', 'tangnest-robotics' ); ?></label></th>
+									<td><input type="number" id="tr-price-4" name="price_additional_child" step="0.01" min="0" value="<?php echo esc_attr( $program->price_additional_child ?? '' ); ?>"></td>
+								</tr>
+							</table>
+							<p class="description"><?php esc_html_e( 'Leave any of these blank if that count doesn\'t apply yet — a family needing an unset count cannot be saved until it\'s filled in here. "Each additional child" is added per child beyond 3, not a flat cap.', 'tangnest-robotics' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><label for="tr-duration"><?php esc_html_e( 'Duration (months)', 'tangnest-robotics' ); ?></label></th>
-						<td><input type="number" id="tr-duration" name="duration_months" min="1" max="36" required value="<?php echo esc_attr( $program->duration_months ?? 8 ); ?>"></td>
+						<th><label for="tr-fee"><?php esc_html_e( 'Legacy monthly amount (RWF)', 'tangnest-robotics' ); ?></label></th>
+						<td>
+							<input type="number" id="tr-fee" name="default_monthly_fee" step="0.01" min="0" value="<?php echo esc_attr( $program->default_monthly_fee ?? '0.00' ); ?>">
+							<p class="description"><?php esc_html_e( 'No longer read for billing (v0.10.0) — kept only so old data isn\'t lost. Use the price table above.', 'tangnest-robotics' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><label for="tr-duration"><?php esc_html_e( 'Default duration (months)', 'tangnest-robotics' ); ?></label></th>
+						<td>
+							<input type="number" id="tr-duration" name="duration_months" min="0" max="36" value="<?php echo esc_attr( $duration_display ); ?>">
+							<p class="description"><?php esc_html_e( 'Optional (v0.10.0) — only used to default a new family\'s end date when they start. A family\'s own programme dates are authoritative and can run for a different length. Leave blank if this course has no fixed length.', 'tangnest-robotics' ); ?></p>
+						</td>
 					</tr>
 					<tr>
 						<th><label for="tr-notes"><?php esc_html_e( 'Notes', 'tangnest-robotics' ); ?></label></th>
@@ -365,10 +412,9 @@ class TR_Packages_Page {
 				<tr>
 					<th><?php esc_html_e( 'Name', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Course', 'tangnest-robotics' ); ?></th>
-					<th><?php esc_html_e( 'Children', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Product Code', 'tangnest-robotics' ); ?></th>
-					<th><?php esc_html_e( 'Monthly Amount', 'tangnest-robotics' ); ?></th>
-					<th><?php esc_html_e( 'Duration', 'tangnest-robotics' ); ?></th>
+					<th><?php esc_html_e( 'Price (1 / 2 / 3 / +each)', 'tangnest-robotics' ); ?></th>
+					<th><?php esc_html_e( 'Default Duration', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Notes', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Families', 'tangnest-robotics' ); ?></th>
 					<th><?php esc_html_e( 'Status', 'tangnest-robotics' ); ?></th>
@@ -377,18 +423,17 @@ class TR_Packages_Page {
 			</thead>
 			<tbody>
 				<?php if ( empty( $programs ) ) : ?>
-					<tr><td colspan="10"><?php esc_html_e( 'No packages yet.', 'tangnest-robotics' ); ?></td></tr>
+					<tr><td colspan="9"><?php esc_html_e( 'No packages yet.', 'tangnest-robotics' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $programs as $program ) : ?>
 						<?php
 						$family_count  = TR_Programs::family_count( (int) $program->id );
 						$missing_code  = 'active' === $program->status && empty( $program->irembopay_product_code );
-						$missing_fee   = 'active' === $program->status && (float) $program->default_monthly_fee <= 0;
+						$missing_prices = 'active' === $program->status ? TR_Programs::missing_price_labels( $program ) : [];
 						?>
 						<tr>
 							<td><?php echo esc_html( $program->name ); ?></td>
 							<td><?php echo esc_html( $program->course ?? '' ); ?></td>
-							<td><?php echo esc_html( $program->child_count ? (string) $program->child_count : '' ); ?></td>
 							<td>
 								<?php echo esc_html( $program->irembopay_product_code ?? '' ); ?>
 								<?php if ( $missing_code ) : ?>
@@ -396,12 +441,20 @@ class TR_Packages_Page {
 								<?php endif; ?>
 							</td>
 							<td>
-								<?php echo esc_html( $program->default_monthly_fee ); ?>
-								<?php if ( $missing_fee ) : ?>
-									<br><span class="tr-warning-flag"><?php esc_html_e( '⚠ No amount set.', 'tangnest-robotics' ); ?></span>
+								<?php echo esc_html( TR_Programs::price_table_summary( $program ) ); ?>
+								<?php if ( ! empty( $missing_prices ) ) : ?>
+									<br><span class="tr-warning-flag">
+										<?php
+										printf(
+											/* translators: %s: comma-separated list of missing counts */
+											esc_html__( '⚠ Incomplete pricing — missing %s.', 'tangnest-robotics' ),
+											esc_html( implode( ', ', $missing_prices ) )
+										);
+										?>
+									</span>
 								<?php endif; ?>
 							</td>
-							<td><?php echo esc_html( $program->duration_months ); ?></td>
+							<td><?php echo esc_html( TR_Programs::has_duration( $program ) ? (string) (int) $program->duration_months : '—' ); ?></td>
 							<td><?php echo esc_html( wp_trim_words( (string) ( $program->notes ?? '' ), 8 ) ); ?></td>
 							<td><?php echo esc_html( (string) $family_count ); ?></td>
 							<td><?php echo esc_html( ucfirst( $program->status ) ); ?></td>

@@ -223,6 +223,11 @@ class TR_Admin_Menu {
 			return;
 		}
 
+		if ( 'edit_amount' === $action && $id > 0 ) {
+			TR_Invoice_Actions::render_edit_amount_form( $id );
+			return;
+		}
+
 		$this->render_invoices_list();
 	}
 
@@ -469,6 +474,7 @@ class TR_Admin_Menu {
 			'family_delete_has_paid_invoices' => [ 'error', __( 'That family could not be deleted — it has a paid invoice, which is the financial record and must never be removed.', 'tangnest-robotics' ) ],
 			'student_status_changed'  => [ 'success', __( 'Student status updated.', 'tangnest-robotics' ) ],
 			'invoice_updated'         => [ 'success', __( 'Invoice updated to the new amount.', 'tangnest-robotics' ) ],
+			'amount_edited'           => [ 'success', __( 'Invoice amount updated.', 'tangnest-robotics' ) ],
 		];
 
 		if ( 'invoices_bulk_deleted' === $notice ) {
@@ -652,6 +658,9 @@ class TR_Admin_Menu {
 
 		$old_status = $student->status;
 		$new_status = 'deactivate' === $row_action ? 'withdrawn' : 'active';
+		$family_id  = (int) $student->family_id;
+		$admin      = wp_get_current_user();
+		$child_name = trim( $student->first_name . ' ' . $student->last_name );
 
 		TR_Students::update( $student_id, [
 			'first_name'    => $student->first_name,
@@ -662,16 +671,38 @@ class TR_Admin_Menu {
 			'notes'         => $student->notes,
 		] );
 
+		TR_Family_Events::record(
+			$family_id,
+			'deactivate' === $row_action ? 'child_deactivated' : 'child_reactivated',
+			sprintf(
+				/* translators: %s: child's full name */
+				'deactivate' === $row_action ? __( '%s deactivated', 'tangnest-robotics' ) : __( '%s reactivated', 'tangnest-robotics' ),
+				$child_name
+			),
+			null,
+			null,
+			$admin->ID
+		);
+
+		// v0.10.0: the active child count just changed — recompute the
+		// family's billed amount for it. A child's status always toggles
+		// regardless; only the amount write is held back (and surfaced via
+		// the existing composition-review notice, now able to show exactly
+		// why) when there's no price for the new count or a negotiated
+		// rate has gone stale. Neither the old nor a guessed new amount is
+		// ever written in that case.
+		TR_Families::recompute_and_save_amount( $family_id, $admin->ID );
+
 		// Enrollments are historical only (v0.8.0) — a withdrawal no longer
 		// touches one, since progress and billing both live on the family.
-		TR_Families::flag_composition_change( (int) $student->family_id );
+		TR_Families::flag_composition_change( $family_id );
 
 		TR_Logger::info( 'Student status changed', [
 			'student_id' => $student_id,
-			'family_id'  => (int) $student->family_id,
+			'family_id'  => $family_id,
 			'old_status' => $old_status,
 			'new_status' => $new_status,
-			'changed_by' => wp_get_current_user()->user_login,
+			'changed_by' => $admin->user_login,
 		] );
 
 		if ( $from_family ) {
@@ -720,16 +751,33 @@ class TR_Admin_Menu {
 				[ 'page' => self::PAGE_FAMILIES, 'action' => 'edit', 'id' => $family->id ],
 				admin_url( 'admin.php' )
 			);
+
+			// v0.10.0: a child count change that TR_Families::
+			// recompute_and_save_amount() couldn't resolve on its own
+			// (a missing table price, or a negotiated rate gone stale)
+			// gets the specific copy naming exactly what's wrong — the
+			// same wording the family form's own hard-block uses — in
+			// place of the old generic "composition changed" notice.
+			$pricing_issue = TR_Families::pricing_issue( $family );
 			?>
 			<div class="notice notice-warning">
 				<p>
 					<?php
-					printf(
-						/* translators: 1: parent name, 2: monthly amount */
-						esc_html__( 'Family composition changed for %1$s. Current monthly amount: %2$s RWF.', 'tangnest-robotics' ),
-						esc_html( $name ),
-						esc_html( $family->monthly_amount )
-					);
+					if ( null !== $pricing_issue ) {
+						printf(
+							/* translators: 1: parent name, 2: the specific pricing problem */
+							esc_html__( '%1$s: %2$s', 'tangnest-robotics' ),
+							esc_html( $name ),
+							esc_html( TR_Families::pricing_issue_message( $pricing_issue ) )
+						);
+					} else {
+						printf(
+							/* translators: 1: parent name, 2: monthly amount */
+							esc_html__( 'Family composition changed for %1$s. Current monthly amount: %2$s RWF.', 'tangnest-robotics' ),
+							esc_html( $name ),
+							esc_html( $family->monthly_amount )
+						);
+					}
 					?>
 					<a href="<?php echo esc_url( $review_url ); ?>"><?php esc_html_e( 'Review', 'tangnest-robotics' ); ?></a>
 				</p>
