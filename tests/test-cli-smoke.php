@@ -69,6 +69,10 @@ function wp_date( $format, $ts ) { return date( $format, $ts ); }
 function wp_next_scheduled( $hook ) { return $GLOBALS['TEST_CRON_NEXT'] ?? false; }
 function get_userdata( $id ) { return $GLOBALS['TEST_USERS'][ $id ] ?? false; }
 function get_user_meta( $id, $key, $single = false ) { return $GLOBALS['TEST_USER_META'][ $id ][ $key ] ?? ''; }
+function get_option( $name, $default = false ) { return 'admin_email' === $name ? 'admin@example.com' : $default; }
+function wp_json_encode( $data, $flags = 0 ) { return json_encode( $data, $flags ); }
+function wp_generate_password( $length = 12, $special_chars = true, $extra_special_chars = false ) { return substr( str_repeat( 'ab12cd34ef56', 4 ), 0, $length ); }
+function wp_timezone() { return new \DateTimeZone( 'Africa/Kigali' ); }
 
 // --- Fixtures ---
 
@@ -216,8 +220,34 @@ class TR_IremboPay_Settings {
 	public static function get(): array {
 		return [ 'enabled' => true, 'secret_key' => '', 'default_product_code' => '' ];
 	}
-	public static function is_enabled(): bool { return false; } // enabled flag true but no secret key
+	// Default false reproduces "enabled flag true but no secret key" for the
+	// `status` tests below; the test-product-amount tests flip this on via
+	// $GLOBALS['TEST_IREMBOPAY_ENABLED'] to exercise its guarded path.
+	public static function is_enabled(): bool { return $GLOBALS['TEST_IREMBOPAY_ENABLED'] ?? false; }
 	public static function default_product_code(): string { return ''; }
+	public static function secret_key(): string { return 'sk_test_SHOULD_NEVER_BE_PRINTED'; }
+	public static function payment_account_identifier(): string { return 'TANGNEST_RWF'; }
+}
+
+class TR_IremboPay_API {
+	public static int $call_count = 0;
+	public static array $last_payload = [];
+
+	public function __construct( string $secret_key ) {}
+
+	public function create_invoice( array $payload ): array {
+		self::$call_count++;
+		self::$last_payload = $payload;
+
+		return [
+			'success'   => true,
+			'data'      => [
+				'invoiceNumber' => 'TEST-INV-1',
+				'amount'        => $payload['paymentItems'][0]['unitAmount'] ?? null,
+			],
+			'http_code' => 200,
+		];
+	}
 }
 
 class TR_Logger {
@@ -359,6 +389,69 @@ run_command( static fn() => $cmd->remind( [ '9' ], [ 'dry-run' => true, 'format'
 
 $lines = run_command( static fn() => $cmd->remind( [ '9' ], [] ), 'remind 9 (real send, stubbed)' );
 check( has_substring( $lines, 'Reminder sent' ), 'remind (real): reports the send as successful' );
+
+// test-product-amount: refused while online payments are disabled (the
+// default for this whole fixture set, as above).
+$GLOBALS['TEST_IREMBOPAY_ENABLED'] = false;
+try {
+	$cmd->test_product_amount( [], [ 'code' => 'PC-02f0b15ac4', 'amount' => '50' ] );
+	echo "FAIL: test-product-amount (disabled) should have called WP_CLI::error()\n";
+	$failures++;
+} catch ( WP_CLI_Test_Exit $e ) {
+	echo "PASS: test-product-amount (disabled) calls WP_CLI::error()\n";
+}
+check( 0 === TR_IremboPay_API::$call_count, 'test-product-amount (disabled): never reaches the API client' );
+
+// Enable online payments for the rest of these — a real site's settings,
+// not this fixture set's deliberately-broken default.
+$GLOBALS['TEST_IREMBOPAY_ENABLED'] = true;
+
+try {
+	$cmd->test_product_amount( [], [ 'amount' => '50' ] );
+	echo "FAIL: test-product-amount (missing --code) should have called WP_CLI::error()\n";
+	$failures++;
+} catch ( WP_CLI_Test_Exit $e ) {
+	echo "PASS: test-product-amount (missing --code) calls WP_CLI::error()\n";
+}
+
+try {
+	$cmd->test_product_amount( [], [ 'code' => 'PC-02f0b15ac4' ] );
+	echo "FAIL: test-product-amount (missing --amount) should have called WP_CLI::error()\n";
+	$failures++;
+} catch ( WP_CLI_Test_Exit $e ) {
+	echo "PASS: test-product-amount (missing --amount) calls WP_CLI::error()\n";
+}
+
+try {
+	$cmd->test_product_amount( [], [ 'code' => 'PC-02f0b15ac4', 'amount' => '49.99' ] );
+	echo "FAIL: test-product-amount (non-integer amount) should have called WP_CLI::error()\n";
+	$failures++;
+} catch ( WP_CLI_Test_Exit $e ) {
+	echo "PASS: test-product-amount (non-integer amount) calls WP_CLI::error()\n";
+}
+check( 0 === TR_IremboPay_API::$call_count, 'test-product-amount (bad args): never reaches the API client' );
+
+$lines = run_command( static fn() => $cmd->test_product_amount( [], [ 'code' => 'PC-02f0b15ac4', 'amount' => '60', 'dry-run' => true ] ), 'test-product-amount --dry-run' );
+check( has_substring( $lines, 'DRY RUN' ), 'test-product-amount --dry-run: says it is a dry run' );
+check( has_substring( $lines, 'PC-02f0b15ac4' ) && has_substring( $lines, '60' ), 'test-product-amount --dry-run: payload shows the code and amount' );
+check( none_contain( $lines, 'sk_test_SHOULD_NEVER_BE_PRINTED' ), 'test-product-amount --dry-run: never prints the secret key' );
+check( 0 === TR_IremboPay_API::$call_count, 'test-product-amount --dry-run: makes no API call' );
+
+$lines = run_command( static fn() => $cmd->test_product_amount( [], [ 'code' => 'PC-02f0b15ac4', 'amount' => '60' ] ), 'test-product-amount (real call, stubbed)' );
+check( 1 === TR_IremboPay_API::$call_count, 'test-product-amount: calls the API client exactly once' );
+check( 60 === ( TR_IremboPay_API::$last_payload['paymentItems'][0]['unitAmount'] ?? null ), 'test-product-amount: sends the given amount as unitAmount' );
+check( has_substring( $lines, 'This creates a real invoice' ), 'test-product-amount: warns before calling' );
+check( has_substring( $lines, 'success:   true' ), 'test-product-amount: prints the success field' );
+check( none_contain( $lines, 'sk_test_SHOULD_NEVER_BE_PRINTED' ), 'test-product-amount: never prints the secret key' );
+
+$logged_test_attempt = false;
+foreach ( TR_Logger::$lines as $log_entry ) {
+	if ( 'info' === $log_entry[0] && false !== strpos( $log_entry[1], 'amount validation test' ) ) {
+		$logged_test_attempt = true;
+		break;
+	}
+}
+check( $logged_test_attempt, 'test-product-amount: logs the attempt at info level' );
 
 function has_line( array $lines, string $needle ): bool {
 	foreach ( $lines as $l ) {

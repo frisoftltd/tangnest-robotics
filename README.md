@@ -17,11 +17,15 @@ See the project spec for the full data model, feature set, and build order.
 
 ## CLI
 
-`wp tangnest ...` — read-only inspection, plus a genuine dry run for
-invoice generation. Registered only when running under WP-CLI; none of
-it runs on, or affects, a normal web request. Every command supports
-`--format=json` for scripting; `status`, `family`, `invoices` and
-`remind` also support `--format=table|csv|yaml`.
+`wp tangnest ...` — read-only inspection against this plugin's own
+data, plus a genuine dry run for invoice generation. Registered only
+when running under WP-CLI; none of it runs on, or affects, a normal
+web request. Every command supports `--format=json` for scripting;
+`status`, `family`, `invoices` and `remind` also support
+`--format=table|csv|yaml`. The one exception is
+`test-product-amount`, which writes nothing to this plugin's tables
+but does create a real (if trivial) invoice at IremboPay, and has no
+`--format` option.
 
 No command prints a secret key, a raw token, or a full access/pay URL —
 token and link state are always shown as a status, never as the link
@@ -146,7 +150,31 @@ Message token Valid until 10 Oct 2026
 DRY RUN — no email was sent.
 ```
 
+### `wp tangnest test-product-amount --code=<code> --amount=<amount>`
+
+Diagnostic only — not part of the billing flow. Creates one real
+IremboPay invoice for the given product code and amount, through the
+exact same `TR_IremboPay_API` client and payload shape
+`TR_Payment::create_new()` uses for a real payment, to find out whether
+IremboPay enforces `unitAmount` against the product's registered
+amount or accepts any amount against a valid code. Writes nothing to
+`wp_tr_invoices`; `--dry-run` prints the payload and makes no API call.
+Requires online payments enabled with a secret key configured.
+
+```
+$ wp tangnest test-product-amount --code=PC-02f0b15ac4 --amount=50
+Warning: This creates a real invoice at IremboPay. Unpaid test invoices expire and can be ignored.
+
+http_code: 200
+success:   true
+amount returned by IremboPay: 50
+...
+```
+
 ## Changelog
+
+### v0.9.4
+- New: `wp tangnest test-product-amount` diagnostic for checking how IremboPay handles a product amount that differs from the one registered
 
 ### v0.9.3
 - New: Students can be deactivated and reactivated, from both the Students list and the family screen

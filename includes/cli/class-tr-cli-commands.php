@@ -529,6 +529,129 @@ class TR_CLI_Command {
 		}
 	}
 
+	/**
+	 * Diagnostic: send one real IremboPay invoice for a given product code
+	 * and amount, through the exact same TR_IremboPay_API client and
+	 * payload shape TR_Payment::create_new() uses for a real payment — to
+	 * find out whether IremboPay enforces unitAmount against the product's
+	 * registered amount, or accepts any amount against a valid code. That
+	 * question decides the whole shape of per-child pricing, and it has
+	 * never been tested because every real payment so far happened to send
+	 * an amount that already matched the product.
+	 *
+	 * Writes nothing to wp_tr_invoices — this creates no family, invoice,
+	 * or student record of any kind; it only talks to IremboPay.
+	 *
+	 * ## OPTIONS
+	 *
+	 * --code=<code>
+	 * : The IremboPay product code to test, e.g. PC-02f0b15ac4.
+	 *
+	 * --amount=<amount>
+	 * : Integer RWF amount to send as unitAmount. RWF has no minor units.
+	 *
+	 * [--dry-run]
+	 * : Print the payload that would be sent and make no API call.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp tangnest test-product-amount --code=PC-02f0b15ac4 --amount=50
+	 *     wp tangnest test-product-amount --code=PC-02f0b15ac4 --amount=60 --dry-run
+	 *
+	 * @subcommand test-product-amount
+	 * @when after_wp_load
+	 */
+	public function test_product_amount( $args, $assoc_args ): void {
+		if ( ! TR_IremboPay_Settings::is_enabled() ) {
+			WP_CLI::error( 'Online payments are not enabled, or no IremboPay secret key is configured — set both in Robotics → Settings first.' );
+		}
+
+		if ( ! isset( $assoc_args['code'] ) || '' === trim( (string) $assoc_args['code'] ) ) {
+			WP_CLI::error( 'Usage: wp tangnest test-product-amount --code=<PC-xxxxxxxxxx> --amount=<integer> [--dry-run]' );
+		}
+		if ( ! isset( $assoc_args['amount'] ) ) {
+			WP_CLI::error( 'Usage: wp tangnest test-product-amount --code=<PC-xxxxxxxxxx> --amount=<integer> [--dry-run]' );
+		}
+
+		$code       = trim( (string) $assoc_args['code'] );
+		$amount_raw = trim( (string) $assoc_args['amount'] );
+
+		if ( ! preg_match( '/^\d+$/', $amount_raw ) ) {
+			WP_CLI::error( 'Amount must be a positive whole number — RWF has no minor units.' );
+		}
+
+		$amount = (int) $amount_raw;
+		if ( $amount <= 0 ) {
+			WP_CLI::error( 'Amount must be a positive whole number.' );
+		}
+
+		$dry_run = (bool) \WP_CLI\Utils\get_flag_value( $assoc_args, 'dry-run', false );
+
+		$transaction_id = 'TEST-' . strtoupper( substr( wp_generate_password( 12, false, false ), 0, 8 ) );
+		$expiry_atom    = ( new DateTime( 'now', wp_timezone() ) )->modify( '+1 hour' )->format( DateTime::ATOM );
+
+		$payload = [
+			'transactionId'            => $transaction_id,
+			'paymentAccountIdentifier' => TR_IremboPay_Settings::payment_account_identifier(),
+			'customer'                 => [
+				'email'       => get_option( 'admin_email' ),
+				'phoneNumber' => '250700000000',
+				'name'        => 'Tangnest Diagnostic',
+			],
+			'paymentItems'             => [
+				[
+					'code'       => $code,
+					'unitAmount' => $amount,
+					'quantity'   => 1,
+				],
+			],
+			'description'              => 'IremboPay amount validation test',
+			'language'                 => 'EN',
+			'expiryAt'                 => $expiry_atom,
+		];
+
+		if ( $dry_run ) {
+			WP_CLI::line( 'DRY RUN — payload that would be sent (no API call made):' );
+			WP_CLI::line( '' );
+			WP_CLI::line( wp_json_encode( $payload, JSON_PRETTY_PRINT ) );
+			return;
+		}
+
+		WP_CLI::warning( 'This creates a real invoice at IremboPay. Unpaid test invoices expire and can be ignored.' );
+
+		// Same client, same proxy, same headers as the real payment flow
+		// (TR_Payment::create_new()) — a test that built its own request
+		// would prove nothing about what the live path actually sends.
+		$api    = new TR_IremboPay_API( TR_IremboPay_Settings::secret_key() );
+		$result = $api->create_invoice( $payload );
+
+		$returned_amount = $result['data']['amount'] ?? $result['amount'] ?? null;
+
+		// Never the secret key — only the code, amount sent, and outcome.
+		TR_Logger::info( 'IremboPay amount validation test', [
+			'product_code'    => $code,
+			'amount_sent'     => $amount,
+			'success'         => ! empty( $result['success'] ),
+			'http_code'       => $result['http_code'] ?? null,
+			'returned_amount' => $returned_amount,
+		] );
+
+		WP_CLI::line( '' );
+		WP_CLI::line( sprintf( 'http_code: %s', $result['http_code'] ?? '?' ) );
+		WP_CLI::line( sprintf( 'success:   %s', ! empty( $result['success'] ) ? 'true' : 'false' ) );
+		if ( null !== $returned_amount ) {
+			WP_CLI::line( sprintf( 'amount returned by IremboPay: %s', $returned_amount ) );
+		}
+		if ( ! empty( $result['errors'] ) ) {
+			WP_CLI::line( 'errors:' );
+			WP_CLI::line( wp_json_encode( $result['errors'], JSON_PRETTY_PRINT ) );
+		}
+
+		WP_CLI::line( '' );
+		WP_CLI::line( 'Full response:' );
+		WP_CLI::line( wp_json_encode( $result, JSON_PRETTY_PRINT ) );
+	}
+
 	private static function output_remind( array $data, string $format, array $assoc_args ): void {
 		if ( in_array( $format, [ 'json', 'yaml' ], true ) ) {
 			WP_CLI::print_value( $data, $assoc_args );
