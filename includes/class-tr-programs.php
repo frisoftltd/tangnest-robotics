@@ -148,10 +148,19 @@ class TR_Programs {
 	}
 
 	/**
-	 * Which of the four price slots are empty, in a form fit to print —
-	 * "1 child", "2 children", "3 children", "each additional child".
-	 * Used by the Packages screen, `wp tangnest status`'s "incomplete
-	 * pricing" section, and the v0.10.0 migration's own log line.
+	 * Which of the three required price slots are empty, in a form fit
+	 * to print — "1 child", "2 children", "3 children". Used by the
+	 * Packages screen, `wp tangnest status`'s "incomplete pricing"
+	 * section, and the v0.10.0 migration's own log line.
+	 *
+	 * price_additional_child is deliberately NOT one of these three
+	 * (v0.10.2) — it's optional, not missing: plenty of packages
+	 * legitimately never see a fourth child, and flagging every one of
+	 * them as "incomplete" would be noise. A family that actually needs
+	 * it and doesn't have one is a real problem, but a package-level one,
+	 * not this one — see TR_CLI_Command's "Families that cannot be
+	 * priced" section in `wp tangnest status`, which only fires when it
+	 * actually bites.
 	 */
 	public static function missing_price_labels( object $package ): array {
 		$missing = [];
@@ -164,9 +173,6 @@ class TR_Programs {
 		}
 		if ( null === $package->price_3_children ) {
 			$missing[] = __( '3 children', 'tangnest-robotics' );
-		}
-		if ( null === $package->price_additional_child ) {
-			$missing[] = __( 'each additional child', 'tangnest-robotics' );
 		}
 
 		return $missing;

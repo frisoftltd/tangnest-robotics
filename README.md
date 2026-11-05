@@ -43,14 +43,20 @@ active family that `TR_Invoice_Generator::is_billable()` would reject
 right now — no package, no active children, a zero monthly amount, or
 an already-ended programme — with its family ID, parent name, and the
 specific reason, and (v0.10.0) **Packages with incomplete pricing**
-(an active package missing a price for 1, 2, 3 or each additional
-child) and **Negotiated rates needing review** (a family's negotiated
-amount no longer matches its active child count). The "next billing"
-figure above only ever counts families that pass the billable check, so
-a family stranded here can never silently pollute it with a date it
-will never actually reach. An active family that will never be invoiced
-is a silent revenue leak; this makes it visible instead of just
-excluding it from the projection.
+(an active package missing a price for 1, 2 or 3 children —
+`price_additional_child` is optional, v0.10.2, so it's never part of
+this check) and **Negotiated rates needing review** (a family's
+negotiated amount no longer matches its active child count). A
+family that an incomplete price table actually blocks — 4 or more
+active children on a package with no additional-child rate — shows
+separately under **Families that cannot be priced** (v0.10.2), naming
+the family and the package, rather than flagging the package itself
+for every family that never needs that rate. The "next billing" figure
+above only ever counts families that pass the billable check, so a
+family stranded here can never silently pollute it with a date it will
+never actually reach. An active family that will never be invoiced is
+a silent revenue leak; this makes it visible instead of just excluding
+it from the projection.
 
 ```
 $ wp tangnest status
@@ -75,6 +81,8 @@ Cannot be billed: none.
 Packages with incomplete pricing: none.
 
 Negotiated rates needing review: none.
+
+Families that cannot be priced: none.
 ```
 
 ```
@@ -88,10 +96,13 @@ Cannot be billed (1)
   #2  Test family  family has no package
 
 Packages with incomplete pricing (1)
-  #14  Applied Robotics & Coding  missing 3 children, each additional child
+  #14  Applied Robotics & Coding  missing 3 children
 
 Negotiated rates needing review (1)
   #14  Test family  This family has a negotiated rate of 130,000 RWF agreed for 3 children. They now have 2. Enter a new agreed amount, or clear the negotiated rate to use the standard price of 120,000 RWF.
+
+Families that cannot be priced (1)
+  #9  Test family  4 children on "Applied Robotics & Coding" — no additional-child rate set
 ```
 
 ### `wp tangnest generate --dry-run`
@@ -237,6 +248,10 @@ No changes made. Re-run with --execute to apply.
 ```
 
 ## Changelog
+
+### v0.10.2
+- Fix: `price_additional_child` is optional, not a sign of an incomplete package — `wp tangnest status`'s "Packages with incomplete pricing" no longer flags it; a family it actually blocks (4+ active children, no additional-child rate) now shows under a new "Families that cannot be priced" heading instead
+- Fix: `wp tangnest consolidate-packages --execute` reports in past tense ("Updated"/"Reassigned"/"Archived") instead of "Would...", and the success line prints last, after the plan
 
 ### v0.10.1
 - New: `wp tangnest consolidate-packages` reduces the 27 legacy packages to 9, reassigns families and archives the rest, refusing to run if any family's amount would change

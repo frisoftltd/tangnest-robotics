@@ -400,6 +400,20 @@ check( count( TR_Family_Events::$events ) >= 6, '--execute: writes at least one 
 check( ! empty( TR_Logger::$lines ), '--execute: logs the run' );
 check( has_substring( $lines, 'Verified total' ), '--execute: prints a verified total after writing' );
 
+// v0.10.2: --execute reports in past tense, never "Would", and the
+// success line is the very last thing printed — never ahead of the
+// plan it's confirming.
+check( has_substring( $lines, 'Updated 9 packages' ), '--execute: reports "Updated", not "Would update"' );
+check( has_substring( $lines, 'Reassigned 6 families' ), '--execute: reports "Reassigned", not "Would reassign"' );
+check( has_substring( $lines, 'Archived 18 packages' ), '--execute: reports "Archived", not "Would archive"' );
+check( ! has_substring( $lines, 'Would' ), '--execute: never says "Would" anywhere in its output' );
+$success_index = null;
+foreach ( $lines as $i => $l ) {
+	if ( false !== strpos( $l, 'SUCCESS:' ) ) { $success_index = $i; }
+}
+check( null !== $success_index && $success_index === array_key_last( $lines ), '--execute: the success line is the last line printed, after the plan' );
+check( has_substring( $lines, 'Package 14' ) && has_substring( $lines, 'Applied Robotics & Coding — Standard' ), '--execute: shows the pre-consolidation name alongside the new one, not the new name on both sides of the arrow' );
+
 $after_total = 0.0;
 foreach ( $GLOBALS['TEST_FAMILIES'] as $f ) { $after_total += (float) $f->monthly_amount; }
 check( abs( $before_total - $after_total ) < 0.005, '--execute: total active monthly_amount is identical before and after' );

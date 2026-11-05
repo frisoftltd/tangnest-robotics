@@ -131,6 +131,10 @@ class TR_Families {
 	// never needs to be anything but false for this smoke test.
 	public static function is_negotiated_stale( object $family ): bool { return false; }
 
+	// v0.10.2 — no fixture family has 4+ children, so the
+	// "cannot be priced" check never has anything to find here.
+	public static function active_child_count( int $family_id ): int { return 0; }
+
 	/**
 	 * Faithful copy of the real algorithm (per-family billing_day
 	 * projected forward from "today"), not a canned value — a stub that

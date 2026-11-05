@@ -96,6 +96,7 @@ class TR_CLI_Command {
 		$cannot_be_billed = self::cannot_be_billed_rows( $active_families, $billability );
 		$incomplete_packages    = self::incomplete_package_rows();
 		$negotiated_needs_review = self::negotiated_review_rows( $active_families );
+		$cannot_be_priced        = self::families_cannot_be_priced_rows( $active_families );
 
 		$children_active = TR_Students::count( [ 'status' => 'active' ] );
 
@@ -154,6 +155,13 @@ class TR_CLI_Command {
 				1 === count( $negotiated_needs_review ) ? ' is' : 's are'
 			);
 		}
+		if ( ! empty( $cannot_be_priced ) ) {
+			$issues[] = sprintf(
+				'%d famil%s cannot be priced — see "Families that cannot be priced" below',
+				count( $cannot_be_priced ),
+				1 === count( $cannot_be_priced ) ? 'y' : 'ies'
+			);
+		}
 		foreach ( $packages_without_code as $p ) {
 			$issues[] = sprintf( 'package "%s" (id %d) has no product code and no site-wide default is set', $p->name, (int) $p->id );
 		}
@@ -191,6 +199,7 @@ class TR_CLI_Command {
 			'cannot_be_billed'            => $cannot_be_billed,
 			'incomplete_packages'         => $incomplete_packages,
 			'negotiated_needs_review'     => $negotiated_needs_review,
+			'cannot_be_priced'            => $cannot_be_priced,
 		];
 
 		if ( in_array( $format, [ 'json', 'yaml' ], true ) ) {
@@ -201,7 +210,7 @@ class TR_CLI_Command {
 		if ( in_array( $format, [ 'table', 'csv' ], true ) ) {
 			$rows = [];
 			foreach ( $data as $key => $value ) {
-				if ( in_array( $key, [ 'issues', 'cannot_be_billed', 'incomplete_packages', 'negotiated_needs_review' ], true ) ) {
+				if ( in_array( $key, [ 'issues', 'cannot_be_billed', 'incomplete_packages', 'negotiated_needs_review', 'cannot_be_priced' ], true ) ) {
 					continue;
 				}
 				$rows[] = [ 'metric' => $key, 'value' => self::scalar_for_display( $value ) ];
@@ -224,6 +233,11 @@ class TR_CLI_Command {
 			if ( ! empty( $data['negotiated_needs_review'] ) ) {
 				WP_CLI::line( '' );
 				\WP_CLI\Utils\format_items( $format, $data['negotiated_needs_review'], [ 'family_id', 'parent_name', 'reason' ] );
+			}
+
+			if ( ! empty( $data['cannot_be_priced'] ) ) {
+				WP_CLI::line( '' );
+				\WP_CLI\Utils\format_items( $format, $data['cannot_be_priced'], [ 'family_id', 'parent_name', 'package_name', 'child_count' ] );
 			}
 			return;
 		}
@@ -746,6 +760,16 @@ class TR_CLI_Command {
 			return;
 		}
 
+		// Captured before anything is checked or written, so the "kept
+		// package" lines in the plan always show the name it's being
+		// renamed FROM — a past-tense run must not show the already-
+		// applied new name on both sides of the arrow.
+		$original_names = [];
+		foreach ( self::CONSOLIDATION_KEEP_PACKAGES as $id => $def ) {
+			$package = TR_Programs::get( $id );
+			$original_names[ $id ] = $package ? $package->name : '(missing)';
+		}
+
 		$errors = array_merge(
 			self::consolidation_check_packages_exist(),
 			self::consolidation_check_family_preconditions()
@@ -784,17 +808,23 @@ class TR_CLI_Command {
 			) );
 		}
 
-		self::print_consolidation_plan( $simulated, $before_total );
-
 		if ( ! $execute ) {
+			self::print_consolidation_plan( $simulated, $before_total, $original_names, false );
 			WP_CLI::line( '' );
 			WP_CLI::line( 'No changes made. Re-run with --execute to apply.' );
 			return;
 		}
 
+		// Only reached once every guard above has passed. Nothing is
+		// reported as done until consolidation_execute() actually
+		// returns — if it fails partway it rolls back and exits via
+		// WP_CLI::error() before a single past-tense line is printed, so
+		// this output can never claim success it didn't verify.
 		self::consolidation_execute();
 
 		$verified_total = self::consolidation_active_families_total();
+
+		self::print_consolidation_plan( $simulated, $verified_total, $original_names, true );
 		WP_CLI::line( '' );
 		WP_CLI::success( sprintf(
 			'Consolidation applied. Verified total: %s RWF across %d active families.',
@@ -989,11 +1019,18 @@ class TR_CLI_Command {
 		return [ $mismatches, $rows ];
 	}
 
-	private static function print_consolidation_plan( array $simulated_rows, float $before_total ): void {
-		WP_CLI::line( sprintf( 'Would update %d packages', count( self::CONSOLIDATION_KEEP_PACKAGES ) ) );
+	/**
+	 * Prints the plan — "Would update/reassign/archive" for a dry run,
+	 * "Updated/Reassigned/Archived" once $executed is true. $original_names
+	 * is a snapshot of each kept package's name taken before anything was
+	 * checked or written, so a past-tense run still shows what it was
+	 * renamed FROM rather than the already-applied new name on both sides
+	 * of the arrow.
+	 */
+	private static function print_consolidation_plan( array $simulated_rows, float $total, array $original_names, bool $executed ): void {
+		WP_CLI::line( sprintf( '%s %d packages', $executed ? 'Updated' : 'Would update', count( self::CONSOLIDATION_KEEP_PACKAGES ) ) );
 		foreach ( self::CONSOLIDATION_KEEP_PACKAGES as $id => $def ) {
-			$current = TR_Programs::get( $id );
-			WP_CLI::line( sprintf( '  #%d  %s', $id, $current ? $current->name : '(missing)' ) );
+			WP_CLI::line( sprintf( '  #%d  %s', $id, $original_names[ $id ] ?? '(missing)' ) );
 			WP_CLI::line( sprintf( '       → %s', $def['name'] ) );
 			WP_CLI::line( sprintf(
 				'       prices %s / %s / %s / %s',
@@ -1007,7 +1044,7 @@ class TR_CLI_Command {
 		WP_CLI::line( '' );
 
 		$reassign_rows = array_values( array_filter( $simulated_rows, static fn( $r ) => $r['reassigned'] ) );
-		WP_CLI::line( sprintf( 'Would reassign %d families', count( $reassign_rows ) ) );
+		WP_CLI::line( sprintf( '%s %d families', $executed ? 'Reassigned' : 'Would reassign', count( $reassign_rows ) ) );
 		foreach ( $reassign_rows as $row ) {
 			WP_CLI::line( sprintf(
 				'  family %-3d  %-18s  %d child%s  #%d → #%d  %s RWF  %s',
@@ -1024,14 +1061,14 @@ class TR_CLI_Command {
 
 		WP_CLI::line( '' );
 
-		WP_CLI::line( sprintf( 'Would archive %d packages', count( self::CONSOLIDATION_ARCHIVE_PACKAGES ) ) );
+		WP_CLI::line( sprintf( '%s %d packages', $executed ? 'Archived' : 'Would archive', count( self::CONSOLIDATION_ARCHIVE_PACKAGES ) ) );
 		WP_CLI::line( '  ' . implode( ', ', array_map( static fn( $id ) => '#' . $id, self::CONSOLIDATION_ARCHIVE_PACKAGES ) ) );
 
 		WP_CLI::line( '' );
 		WP_CLI::line( sprintf(
 			'Totals  %d families, %s RWF before and after — no change',
 			count( $simulated_rows ),
-			self::consolidation_fmt( $before_total )
+			self::consolidation_fmt( $total )
 		) );
 	}
 
@@ -1414,6 +1451,47 @@ class TR_CLI_Command {
 	}
 
 	/**
+	 * Every active family with 4 or more active children whose package
+	 * has no additional-child rate (v0.10.2) — price_additional_child is
+	 * optional, so this is never surfaced as a problem with the package
+	 * itself (see TR_Programs::missing_price_labels()); it's only a real
+	 * problem for the specific families it actually blocks. Such a
+	 * family's monthly_amount is whatever was last successfully written,
+	 * not what it would bill next — the recompute that would move it
+	 * refused to write a guess (TR_Families::recompute_and_save_amount()).
+	 */
+	private static function families_cannot_be_priced_rows( array $active_families ): array {
+		$rows = [];
+
+		foreach ( $active_families as $family ) {
+			if ( empty( $family->package_id ) ) {
+				continue;
+			}
+
+			$child_count = TR_Families::active_child_count( (int) $family->id );
+			if ( $child_count < 4 ) {
+				continue;
+			}
+
+			$package = TR_Programs::get( (int) $family->package_id );
+			if ( null === $package || null !== $package->price_additional_child ) {
+				continue;
+			}
+
+			$user = get_userdata( (int) $family->parent_user_id );
+
+			$rows[] = [
+				'family_id'    => (int) $family->id,
+				'parent_name'  => $user ? $user->display_name : '(no WordPress user)',
+				'package_name' => $package->name,
+				'child_count'  => $child_count,
+			];
+		}
+
+		return $rows;
+	}
+
+	/**
 	 * The nearest upcoming billing date among active, currently-billable
 	 * families with a set billing anchor, and how many share it —
 	 * TR_Families::next_billing_date() already knows how to project one
@@ -1537,12 +1615,29 @@ class TR_CLI_Command {
 
 		if ( empty( $data['negotiated_needs_review'] ) ) {
 			WP_CLI::line( 'Negotiated rates needing review: none.' );
+		} else {
+			WP_CLI::line( sprintf( 'Negotiated rates needing review (%d)', count( $data['negotiated_needs_review'] ) ) );
+			foreach ( $data['negotiated_needs_review'] as $row ) {
+				WP_CLI::line( sprintf( '  #%d  %s  %s', $row['family_id'], $row['parent_name'], $row['reason'] ) );
+			}
+		}
+
+		WP_CLI::line( '' );
+
+		if ( empty( $data['cannot_be_priced'] ) ) {
+			WP_CLI::line( 'Families that cannot be priced: none.' );
 			return;
 		}
 
-		WP_CLI::line( sprintf( 'Negotiated rates needing review (%d)', count( $data['negotiated_needs_review'] ) ) );
-		foreach ( $data['negotiated_needs_review'] as $row ) {
-			WP_CLI::line( sprintf( '  #%d  %s  %s', $row['family_id'], $row['parent_name'], $row['reason'] ) );
+		WP_CLI::line( sprintf( 'Families that cannot be priced (%d)', count( $data['cannot_be_priced'] ) ) );
+		foreach ( $data['cannot_be_priced'] as $row ) {
+			WP_CLI::line( sprintf(
+				'  #%d  %s  %d children on "%s" — no additional-child rate set',
+				$row['family_id'],
+				$row['parent_name'],
+				$row['child_count'],
+				$row['package_name']
+			) );
 		}
 	}
 
