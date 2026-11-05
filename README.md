@@ -18,14 +18,15 @@ See the project spec for the full data model, feature set, and build order.
 ## CLI
 
 `wp tangnest ...` — read-only inspection against this plugin's own
-data, plus a genuine dry run for invoice generation. Registered only
-when running under WP-CLI; none of it runs on, or affects, a normal
-web request. Every command supports `--format=json` for scripting;
-`status`, `family`, `invoices` and `remind` also support
-`--format=table|csv|yaml`. The one exception is
-`test-product-amount`, which writes nothing to this plugin's tables
-but does create a real (if trivial) invoice at IremboPay, and has no
-`--format` option.
+data, plus a genuine dry run for invoice generation and package
+consolidation. Registered only when running under WP-CLI; none of it
+runs on, or affects, a normal web request. Every command supports
+`--format=json` for scripting; `status`, `family`, `invoices` and
+`remind` also support `--format=table|csv|yaml`. Two exceptions have
+no `--format` option: `test-product-amount`, which writes nothing to
+this plugin's tables but does create a real (if trivial) invoice at
+IremboPay, and `consolidate-packages`, a one-time migration whose
+output is a fixed report, not a queryable dataset.
 
 No command prints a secret key, a raw token, or a full access/pay URL —
 token and link state are always shown as a status, never as the link
@@ -191,7 +192,55 @@ amount returned by IremboPay: 50
 ...
 ```
 
+### `wp tangnest consolidate-packages [--execute]`
+
+One-time migration (v0.10.1): 27 legacy packages, one per child-count
+tier under the old model, down to 9 real price-table packages. The
+mapping — which packages to keep with what new name/price table, which
+six families move to which package (two with a negotiated rate), and
+which 18 packages get archived — is fixed data in the command itself,
+never derived from package names (they're inconsistent, which is the
+whole reason this exists).
+
+Dry run is the default — the opposite of `generate`, deliberately,
+since forgetting `--execute` here must produce nothing rather than a
+migration against live billing data. Every currently active family's
+resulting amount is simulated and compared against its current one
+before anything is written; any family whose amount would move, by any
+amount, aborts the entire run with that family named. A live-data
+mismatch against what the mapping expects (wrong package, wrong active
+child count, wrong current amount) aborts the same way, reporting
+every mismatch found, not just the first. The write phase is
+transactional — a failure part-way leaves nothing changed — and
+packages are archived, never deleted. Re-running after a successful
+consolidation detects that package #14 is already fully priced and no
+family remains on #16/#20/#21, and exits without touching anything.
+
+```
+$ wp tangnest consolidate-packages
+Would update 9 packages
+  #14  Applied Robotics & Coding
+       → Applied Robotics & Coding — Standard
+       prices 65,000 / 120,000 / 155,000 / —
+...
+
+Would reassign 6 families
+  family 5    Andre KAZEYEZU    2 children  #16 → #14  120,000 RWF  unchanged
+  family 14   Saidath Gato      3 children  #20 → #14  130,000 RWF  unchanged (negotiated)
+...
+
+Would archive 18 packages
+  #2, #5, #6, #7, #10, #11, #12, #13, #16, #17, #18, #19, #20, #21, #23, #24, #26, #27
+
+Totals  14 families, 1,125,050.00 RWF before and after — no change
+No changes made. Re-run with --execute to apply.
+```
+
 ## Changelog
+
+### v0.10.1
+- New: `wp tangnest consolidate-packages` reduces the 27 legacy packages to 9, reassigns families and archives the rest, refusing to run if any family's amount would change
+- Fix: `wp tangnest status` grammar for a single incomplete package ("is missing part of its price table" vs "are missing part of their price tables")
 
 ### v0.10.0
 - Changed: Packages now carry a monthly price for 1, 2, 3 and each additional child

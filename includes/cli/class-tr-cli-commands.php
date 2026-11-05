@@ -20,6 +20,46 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 class TR_CLI_Command {
 
 	/**
+	 * Fixed data for `wp tangnest consolidate-packages` (v0.10.1) —
+	 * deliberately NOT derived from package names, which are inconsistent
+	 * ("Applied Robotics & Coding – 2 siblings" no longer means anything
+	 * under the price-table model). Every number here was verified by
+	 * hand against the live data before this command was written.
+	 *
+	 * price_add is NULL on every robotics package on purpose — the real
+	 * increments (+55,000 then +35,000) don't extend to a fourth child,
+	 * and a family that size would be negotiated anyway. NULL means that
+	 * family is refused, never billed an invented figure.
+	 */
+	const CONSOLIDATION_KEEP_PACKAGES = [
+		4  => [ 'name' => 'Introduction Robotics, Engineering & Coding — Standard', 'course' => 'Introduction Robotics, Engineering & Coding', 'price1' => 65000.0, 'price2' => 120000.0, 'price3' => 155000.0, 'price_add' => null, 'duration' => 8 ],
+		3  => [ 'name' => 'Introduction Robotics, Engineering & Coding — Premium', 'course' => 'Introduction Robotics, Engineering & Coding', 'price1' => 75000.0, 'price2' => 140000.0, 'price3' => 195000.0, 'price_add' => null, 'duration' => 8 ],
+		8  => [ 'name' => 'Robotics Engineering — Standard', 'course' => 'Robotics Engineering', 'price1' => 65000.0, 'price2' => 120000.0, 'price3' => 155000.0, 'price_add' => null, 'duration' => 8 ],
+		9  => [ 'name' => 'Robotics Engineering — Premium', 'course' => 'Robotics Engineering', 'price1' => 75000.0, 'price2' => 140000.0, 'price3' => 195000.0, 'price_add' => null, 'duration' => 8 ],
+		14 => [ 'name' => 'Applied Robotics & Coding — Standard', 'course' => 'Applied Robotics & Coding', 'price1' => 65000.0, 'price2' => 120000.0, 'price3' => 155000.0, 'price_add' => null, 'duration' => 8 ],
+		15 => [ 'name' => 'Applied Robotics & Coding — Premium', 'course' => 'Applied Robotics & Coding', 'price1' => 75000.0, 'price2' => 140000.0, 'price3' => 195000.0, 'price_add' => null, 'duration' => 8 ],
+		25 => [ 'name' => 'Computational Thinking with Scratch', 'course' => 'Computational Thinking with Scratch', 'price1' => 19500.0, 'price2' => 39000.0, 'price3' => 58500.0, 'price_add' => 19500.0, 'duration' => 8 ],
+		22 => [ 'name' => 'Computer Science & Virtual Robotics', 'course' => 'Computer Science & Virtual Robotics', 'price1' => 47500.0, 'price2' => 95000.0, 'price3' => 142500.0, 'price_add' => 47500.0, 'duration' => 8 ],
+		1  => [ 'name' => 'Introduction Robotics — Test (50 RWF)', 'course' => 'Introduction Robotics, Engineering & Coding', 'price1' => 50.0, 'price2' => 50.0, 'price3' => 50.0, 'price_add' => 50.0, 'duration' => 8 ],
+	];
+
+	/**
+	 * Keyed by family ID. 'negotiated' + 'negotiated_note' are only
+	 * present for families 14 and 20, whose rate cannot be derived from
+	 * any rule — recorded, not computed.
+	 */
+	const CONSOLIDATION_REASSIGNMENTS = [
+		5  => [ 'from' => 16, 'to' => 14, 'child_count' => 2, 'amount' => 120000.0 ],
+		7  => [ 'from' => 16, 'to' => 14, 'child_count' => 2, 'amount' => 120000.0 ],
+		10 => [ 'from' => 16, 'to' => 14, 'child_count' => 2, 'amount' => 120000.0 ],
+		15 => [ 'from' => 16, 'to' => 14, 'child_count' => 2, 'amount' => 120000.0 ],
+		14 => [ 'from' => 20, 'to' => 14, 'child_count' => 3, 'amount' => 130000.0, 'negotiated' => 130000.0, 'negotiated_note' => 'Consolidated from package 20' ],
+		20 => [ 'from' => 21, 'to' => 14, 'child_count' => 1, 'amount' => 60000.0, 'negotiated' => 60000.0, 'negotiated_note' => 'Consolidated from package 21' ],
+	];
+
+	const CONSOLIDATION_ARCHIVE_PACKAGES = [ 2, 5, 6, 7, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 23, 24, 26, 27 ];
+
+	/**
 	 * One-screen overview of the whole system: families, children,
 	 * packages, invoices, money, the next billing date, cron, online
 	 * payments and the debug-log toggle — plus anything worth flagging.
@@ -98,10 +138,13 @@ class TR_CLI_Command {
 			);
 		}
 		if ( ! empty( $incomplete_packages ) ) {
+			$is_one = 1 === count( $incomplete_packages );
 			$issues[] = sprintf(
-				'%d active package%s missing part of its price table — see "Packages with incomplete pricing" below',
+				'%d active package%s missing part of %s price table%s — see "Packages with incomplete pricing" below',
 				count( $incomplete_packages ),
-				1 === count( $incomplete_packages ) ? ' is' : 's are'
+				$is_one ? ' is' : 's are',
+				$is_one ? 'its' : 'their',
+				$is_one ? '' : 's'
 			);
 		}
 		if ( ! empty( $negotiated_needs_review ) ) {
@@ -669,6 +712,482 @@ class TR_CLI_Command {
 		WP_CLI::line( '' );
 		WP_CLI::line( 'Full response:' );
 		WP_CLI::line( wp_json_encode( $result, JSON_PRETTY_PRINT ) );
+	}
+
+	/**
+	 * One-time migration: 27 legacy packages (one per child-count tier,
+	 * the old model) down to 9 real price-table packages (v0.10.1) — see
+	 * CONSOLIDATION_KEEP_PACKAGES above for why the mapping is fixed data
+	 * rather than parsed from names. Dry run is the default, the opposite
+	 * of `generate` — forgetting --execute here must produce nothing,
+	 * never a migration against live billing data. Every active family's
+	 * resulting amount is simulated and compared before anything is
+	 * written; any mismatch, anywhere, aborts the whole run.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--execute]
+	 * : Actually write the changes. Without this, prints what would
+	 * happen and writes nothing.
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp tangnest consolidate-packages
+	 *     wp tangnest consolidate-packages --execute
+	 *
+	 * @subcommand consolidate-packages
+	 * @when after_wp_load
+	 */
+	public function consolidate_packages( $args, $assoc_args ): void {
+		$execute = (bool) \WP_CLI\Utils\get_flag_value( $assoc_args, 'execute', false );
+
+		if ( self::consolidation_already_done() ) {
+			WP_CLI::line( 'Consolidation already appears to have run: package #14 has a complete price table and no family remains on package #16, #20 or #21. Nothing to do.' );
+			return;
+		}
+
+		$errors = array_merge(
+			self::consolidation_check_packages_exist(),
+			self::consolidation_check_family_preconditions()
+		);
+
+		if ( ! empty( $errors ) ) {
+			WP_CLI::line( 'Consolidation aborted — the live data does not match what this command expects:' );
+			foreach ( $errors as $error ) {
+				WP_CLI::line( '  - ' . $error );
+			}
+			WP_CLI::error( 'Nothing was changed.' );
+		}
+
+		$before_total = self::consolidation_active_families_total();
+		[ $amount_mismatches, $simulated ] = self::consolidation_simulate();
+
+		if ( ! empty( $amount_mismatches ) ) {
+			WP_CLI::line( 'Consolidation aborted — the following famil(y/ies) would have their amount changed, which must never happen:' );
+			foreach ( $amount_mismatches as $m ) {
+				WP_CLI::line( sprintf(
+					'  - family #%d: %s → %s',
+					$m['family_id'],
+					self::consolidation_fmt( $m['old'] ),
+					null !== $m['new'] ? self::consolidation_fmt( $m['new'] ) : '(no price for this count)'
+				) );
+			}
+			WP_CLI::error( 'Nothing was changed.' );
+		}
+
+		$after_total = round( array_sum( array_column( $simulated, 'new_amount' ) ), 2 );
+		if ( abs( $after_total - $before_total ) > 0.005 ) {
+			WP_CLI::error( sprintf(
+				'Consolidation aborted — total active monthly_amount would move from %s to %s RWF.',
+				self::consolidation_fmt( $before_total ),
+				self::consolidation_fmt( $after_total )
+			) );
+		}
+
+		self::print_consolidation_plan( $simulated, $before_total );
+
+		if ( ! $execute ) {
+			WP_CLI::line( '' );
+			WP_CLI::line( 'No changes made. Re-run with --execute to apply.' );
+			return;
+		}
+
+		self::consolidation_execute();
+
+		$verified_total = self::consolidation_active_families_total();
+		WP_CLI::line( '' );
+		WP_CLI::success( sprintf(
+			'Consolidation applied. Verified total: %s RWF across %d active families.',
+			self::consolidation_fmt( $verified_total ),
+			TR_Families::count( [ 'status' => 'active' ] )
+		) );
+	}
+
+	/**
+	 * Guard #5 — if package #14 is already fully priced and nobody is
+	 * left on the three packages being retired, this has already run;
+	 * exit cleanly rather than re-deriving a plan that would just report
+	 * every reassignment as "already there".
+	 */
+	private static function consolidation_already_done(): bool {
+		$package_14 = TR_Programs::get( 14 );
+		if ( null === $package_14 ) {
+			return false;
+		}
+
+		$complete = null !== $package_14->price_1_child
+			&& null !== $package_14->price_2_children
+			&& null !== $package_14->price_3_children;
+
+		if ( ! $complete ) {
+			return false;
+		}
+
+		global $wpdb;
+		$families_table = TR_DB::table_families();
+		$stuck = (int) $wpdb->get_var( $wpdb->prepare(
+			"SELECT COUNT(*) FROM {$families_table} WHERE package_id IN (%d, %d, %d)",
+			[ 16, 20, 21 ]
+		) );
+
+		return 0 === $stuck;
+	}
+
+	/**
+	 * Guard #2 — every package ID this command touches (the 9 kept, the
+	 * 18 archived — the 3 "from" packages are already inside that
+	 * archive list) must exist and currently be active. Collects every
+	 * failure rather than stopping at the first.
+	 */
+	private static function consolidation_check_packages_exist(): array {
+		$errors = [];
+		$ids    = array_unique( array_merge(
+			array_keys( self::CONSOLIDATION_KEEP_PACKAGES ),
+			self::CONSOLIDATION_ARCHIVE_PACKAGES
+		) );
+
+		foreach ( $ids as $id ) {
+			$package = TR_Programs::get( $id );
+			if ( null === $package ) {
+				$errors[] = sprintf( 'package #%d does not exist', $id );
+				continue;
+			}
+			if ( 'active' !== $package->status ) {
+				$errors[] = sprintf( 'package #%d ("%s") is not active (status: %s)', $id, $package->name, $package->status );
+			}
+		}
+
+		return $errors;
+	}
+
+	/**
+	 * Guard #1 — every family named in CONSOLIDATION_REASSIGNMENTS must
+	 * currently be exactly where this mapping assumes: the stated
+	 * package, the stated active child count, the stated monthly_amount.
+	 * This command is a one-time migration against known data, and must
+	 * assert that data rather than trust it. Collects every mismatch.
+	 */
+	private static function consolidation_check_family_preconditions(): array {
+		$errors = [];
+
+		foreach ( self::CONSOLIDATION_REASSIGNMENTS as $family_id => $plan ) {
+			$family = TR_Families::get( $family_id );
+			if ( null === $family ) {
+				$errors[] = sprintf( 'family #%d does not exist', $family_id );
+				continue;
+			}
+
+			if ( (int) $family->package_id !== $plan['from'] ) {
+				$errors[] = sprintf( 'family #%d: expected to be on package #%d, is actually on #%d', $family_id, $plan['from'], (int) $family->package_id );
+			}
+
+			$child_count = TR_Families::active_child_count( $family_id );
+			if ( $child_count !== $plan['child_count'] ) {
+				$errors[] = sprintf( 'family #%d: expected %d active children, has %d', $family_id, $plan['child_count'], $child_count );
+			}
+
+			if ( abs( (float) $family->monthly_amount - $plan['amount'] ) > 0.005 ) {
+				$errors[] = sprintf(
+					'family #%d: expected monthly_amount %s, has %s',
+					$family_id,
+					self::consolidation_fmt( $plan['amount'] ),
+					self::consolidation_fmt( (float) $family->monthly_amount )
+				);
+			}
+		}
+
+		return $errors;
+	}
+
+	private static function consolidation_active_families_total(): float {
+		global $wpdb;
+		$families_table = TR_DB::table_families();
+
+		return (float) $wpdb->get_var( $wpdb->prepare(
+			"SELECT COALESCE(SUM(monthly_amount), 0) FROM {$families_table} WHERE status = %s",
+			[ 'active' ]
+		) );
+	}
+
+	/**
+	 * The new price table's figure for a child count, read from the fixed
+	 * mapping — never from the database, since in a dry run (and even at
+	 * the top of an execute run, before anything is written) the real
+	 * rows don't have these values yet.
+	 */
+	private static function consolidation_new_table_price( array $package_def, int $child_count ): ?float {
+		if ( $child_count < 1 ) {
+			return null;
+		}
+		if ( $child_count <= 3 ) {
+			return [ 1 => $package_def['price1'], 2 => $package_def['price2'], 3 => $package_def['price3'] ][ $child_count ];
+		}
+		if ( null === $package_def['price3'] || null === $package_def['price_add'] ) {
+			return null;
+		}
+
+		return $package_def['price3'] + ( $child_count - 3 ) * $package_def['price_add'];
+	}
+
+	/**
+	 * Guards #3 and #4 — the resulting monthly_amount for every currently
+	 * active family (not just the six being reassigned), computed from
+	 * the fixed mapping rather than read back from the database. A family
+	 * untouched by this consolidation still gets simulated: its package
+	 * either isn't changing (so today's real price-table lookup applies
+	 * unchanged) or it's one of the kept packages whose table is about to
+	 * change, in which case the new table must still land on today's
+	 * figure.
+	 *
+	 * @return array{0: array, 1: array} [ mismatches, every family's simulated row ]
+	 */
+	private static function consolidation_simulate(): array {
+		$mismatches = [];
+		$rows       = [];
+
+		foreach ( TR_Families::get_list( [ 'status' => 'active', 'per_page' => 10000 ] ) as $family ) {
+			$family_id   = (int) $family->id;
+			$old_amount  = (float) $family->monthly_amount;
+			$old_package = (int) $family->package_id;
+			$child_count = TR_Families::active_child_count( $family_id );
+
+			$plan           = self::CONSOLIDATION_REASSIGNMENTS[ $family_id ] ?? null;
+			$new_package_id = $plan['to'] ?? $old_package;
+			$negotiated     = null !== $plan ? ( $plan['negotiated'] ?? null ) : null;
+
+			if ( null !== $negotiated ) {
+				$new_amount = (float) $negotiated;
+			} elseif ( isset( self::CONSOLIDATION_KEEP_PACKAGES[ $new_package_id ] ) ) {
+				$new_amount = self::consolidation_new_table_price( self::CONSOLIDATION_KEEP_PACKAGES[ $new_package_id ], $child_count );
+			} else {
+				// Untouched by this consolidation — including a package
+				// about to be archived, which only ever changes status,
+				// never its price columns — so today's real lookup is
+				// still the right answer.
+				$new_amount = TR_Families::price_for_child_count( $new_package_id, $child_count );
+			}
+
+			if ( null === $new_amount || abs( $new_amount - $old_amount ) > 0.005 ) {
+				$mismatches[] = [ 'family_id' => $family_id, 'old' => $old_amount, 'new' => $new_amount ];
+			}
+
+			$user = get_userdata( (int) $family->parent_user_id );
+
+			$rows[] = [
+				'family_id'   => $family_id,
+				'parent_name' => $user ? $user->display_name : '(no WordPress user)',
+				'child_count' => $child_count,
+				'old_package' => $old_package,
+				'new_package' => $new_package_id,
+				'old_amount'  => $old_amount,
+				'new_amount'  => $new_amount ?? $old_amount,
+				'negotiated'  => null !== $negotiated,
+				'reassigned'  => null !== $plan,
+			];
+		}
+
+		return [ $mismatches, $rows ];
+	}
+
+	private static function print_consolidation_plan( array $simulated_rows, float $before_total ): void {
+		WP_CLI::line( sprintf( 'Would update %d packages', count( self::CONSOLIDATION_KEEP_PACKAGES ) ) );
+		foreach ( self::CONSOLIDATION_KEEP_PACKAGES as $id => $def ) {
+			$current = TR_Programs::get( $id );
+			WP_CLI::line( sprintf( '  #%d  %s', $id, $current ? $current->name : '(missing)' ) );
+			WP_CLI::line( sprintf( '       → %s', $def['name'] ) );
+			WP_CLI::line( sprintf(
+				'       prices %s / %s / %s / %s',
+				number_format( $def['price1'], 0 ),
+				number_format( $def['price2'], 0 ),
+				number_format( $def['price3'], 0 ),
+				null !== $def['price_add'] ? number_format( $def['price_add'], 0 ) : '—'
+			) );
+		}
+
+		WP_CLI::line( '' );
+
+		$reassign_rows = array_values( array_filter( $simulated_rows, static fn( $r ) => $r['reassigned'] ) );
+		WP_CLI::line( sprintf( 'Would reassign %d families', count( $reassign_rows ) ) );
+		foreach ( $reassign_rows as $row ) {
+			WP_CLI::line( sprintf(
+				'  family %-3d  %-18s  %d child%s  #%d → #%d  %s RWF  %s',
+				$row['family_id'],
+				$row['parent_name'],
+				$row['child_count'],
+				1 === $row['child_count'] ? '' : 'ren',
+				$row['old_package'],
+				$row['new_package'],
+				number_format( $row['new_amount'], 0 ),
+				$row['negotiated'] ? 'unchanged (negotiated)' : 'unchanged'
+			) );
+		}
+
+		WP_CLI::line( '' );
+
+		WP_CLI::line( sprintf( 'Would archive %d packages', count( self::CONSOLIDATION_ARCHIVE_PACKAGES ) ) );
+		WP_CLI::line( '  ' . implode( ', ', array_map( static fn( $id ) => '#' . $id, self::CONSOLIDATION_ARCHIVE_PACKAGES ) ) );
+
+		WP_CLI::line( '' );
+		WP_CLI::line( sprintf(
+			'Totals  %d families, %s RWF before and after — no change',
+			count( $simulated_rows ),
+			self::consolidation_fmt( $before_total )
+		) );
+	}
+
+	/**
+	 * The write phase — only ever reached after every guard above has
+	 * passed. Transactional: any failure anywhere rolls back everything,
+	 * leaving the database exactly as it was before this ran.
+	 */
+	private static function consolidation_execute(): void {
+		global $wpdb;
+
+		$admin_id = get_current_user_id();
+		$wpdb->query( 'START TRANSACTION' );
+
+		try {
+			foreach ( self::CONSOLIDATION_KEEP_PACKAGES as $id => $def ) {
+				$package = TR_Programs::get( $id );
+				if ( null === $package ) {
+					throw new RuntimeException( "package #{$id} vanished mid-run" );
+				}
+
+				$ok = TR_Programs::update( $id, [
+					'name'                   => $def['name'],
+					'duration_months'        => $def['duration'],
+					'default_monthly_fee'    => $package->default_monthly_fee,
+					'irembopay_product_code' => $package->irembopay_product_code,
+					'course'                 => $def['course'],
+					'child_count'            => $package->child_count,
+					'price_1_child'          => $def['price1'],
+					'price_2_children'       => $def['price2'],
+					'price_3_children'       => $def['price3'],
+					'price_additional_child' => $def['price_add'],
+					'start_date'             => $package->start_date,
+					'notes'                  => $package->notes,
+					'status'                 => 'active',
+				] );
+
+				if ( ! $ok ) {
+					throw new RuntimeException( "failed to update package #{$id}" );
+				}
+			}
+
+			foreach ( self::CONSOLIDATION_REASSIGNMENTS as $family_id => $plan ) {
+				$family = TR_Families::get( $family_id );
+				if ( null === $family ) {
+					throw new RuntimeException( "family #{$family_id} vanished mid-run" );
+				}
+
+				$child_count          = TR_Families::active_child_count( $family_id );
+				$negotiated_amount    = $plan['negotiated'] ?? null;
+				$negotiated_for_count = null !== $negotiated_amount ? $child_count : null;
+				$negotiated_note      = $plan['negotiated_note'] ?? '';
+
+				$new_amount = null !== $negotiated_amount
+					? (float) $negotiated_amount
+					: self::consolidation_new_table_price( self::CONSOLIDATION_KEEP_PACKAGES[ $plan['to'] ], $child_count );
+
+				$ok = TR_Families::update( $family_id, [
+					'monthly_amount'             => $new_amount,
+					'package_id'                 => $plan['to'],
+					'months_paid'                => (int) $family->months_paid,
+					'currency'                   => $family->currency,
+					'billing_day'                => (int) $family->billing_day,
+					'program_start_date'         => $family->program_start_date,
+					'program_end_date'           => $family->program_end_date,
+					'negotiated_amount'          => $negotiated_amount,
+					'negotiated_for_child_count' => $negotiated_for_count,
+					'negotiated_note'            => $negotiated_note,
+					'status'                     => $family->status,
+					'notes'                      => $family->notes,
+				] );
+
+				if ( ! $ok ) {
+					throw new RuntimeException( "failed to update family #{$family_id}" );
+				}
+
+				$old_package_row = TR_Programs::get( $plan['from'] );
+				$new_package_row = TR_Programs::get( $plan['to'] );
+
+				TR_Family_Events::record(
+					$family_id,
+					'package_changed',
+					sprintf(
+						/* translators: 1: old package name, 2: new package name */
+						__( 'Package changed from "%1$s" to "%2$s" (package consolidation)', 'tangnest-robotics' ),
+						$old_package_row->name ?? (string) $plan['from'],
+						$new_package_row->name ?? (string) $plan['to']
+					),
+					$old_package_row->name ?? '',
+					$new_package_row->name ?? '',
+					$admin_id
+				);
+
+				if ( null !== $negotiated_amount ) {
+					TR_Family_Events::record(
+						$family_id,
+						'negotiated_set',
+						sprintf(
+							/* translators: 1: negotiated amount, 2: child count, 3: note */
+							__( 'Negotiated rate set to %1$s RWF (%2$d children) — %3$s', 'tangnest-robotics' ),
+							number_format( $negotiated_amount, 0 ),
+							$negotiated_for_count,
+							$negotiated_note
+						),
+						null,
+						number_format( $negotiated_amount, 2, '.', '' ),
+						$admin_id
+					);
+				}
+			}
+
+			foreach ( self::CONSOLIDATION_ARCHIVE_PACKAGES as $id ) {
+				$package = TR_Programs::get( $id );
+				if ( null === $package ) {
+					throw new RuntimeException( "package #{$id} vanished mid-run" );
+				}
+
+				$ok = TR_Programs::update( $id, [
+					'name'                   => $package->name,
+					'duration_months'        => $package->duration_months,
+					'default_monthly_fee'    => $package->default_monthly_fee,
+					'irembopay_product_code' => $package->irembopay_product_code,
+					'course'                 => $package->course,
+					'child_count'            => $package->child_count,
+					'price_1_child'          => $package->price_1_child,
+					'price_2_children'       => $package->price_2_children,
+					'price_3_children'       => $package->price_3_children,
+					'price_additional_child' => $package->price_additional_child,
+					'start_date'             => $package->start_date,
+					'notes'                  => $package->notes,
+					'status'                 => 'inactive',
+				] );
+
+				if ( ! $ok ) {
+					throw new RuntimeException( "failed to archive package #{$id}" );
+				}
+			}
+		} catch ( \Throwable $e ) {
+			$wpdb->query( 'ROLLBACK' );
+			TR_Logger::error( 'Package consolidation failed, rolled back', [ 'error' => $e->getMessage() ] );
+			WP_CLI::error( 'Consolidation failed mid-run and was rolled back: ' . $e->getMessage() );
+		}
+
+		$wpdb->query( 'COMMIT' );
+
+		$admin_user = wp_get_current_user();
+		TR_Logger::info( 'Package consolidation applied', [
+			'packages_updated'    => count( self::CONSOLIDATION_KEEP_PACKAGES ),
+			'families_reassigned' => count( self::CONSOLIDATION_REASSIGNMENTS ),
+			'packages_archived'   => count( self::CONSOLIDATION_ARCHIVE_PACKAGES ),
+			'applied_by'          => $admin_user && $admin_user->exists() ? $admin_user->user_login : 'cli',
+		] );
+	}
+
+	private static function consolidation_fmt( ?float $amount ): string {
+		return null === $amount ? '—' : number_format( $amount, 2 );
 	}
 
 	private static function output_remind( array $data, string $format, array $assoc_args ): void {
